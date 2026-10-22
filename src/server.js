@@ -39,6 +39,7 @@ Reglas:
 - La transcripción puede tener errores de reconocimiento; interpreta la intención.`;
 
 // Arranca el servidor HTTP/WS. Toda la configuración entra por `opts`; el módulo no lee process.env.
+// Sin claves arranca igual (para poder mostrar Ajustes): /ws avisa y cierra, /transcribe responde 400.
 // Si se pasa `token`, /ws y /transcribe lo exigen en `?t=`.
 // `onMessage` (opcional) recibe cada mensaje que el servidor envía al cliente (answer_*, transcript...).
 export async function startServer({
@@ -52,8 +53,9 @@ export async function startServer({
   token,
   onMessage,
 }) {
-  if (!deepgramKey || !anthropicKey) throw new Error('Faltan la clave de Deepgram o la de Anthropic');
-  const anthropic = new Anthropic({ apiKey: anthropicKey });
+  const hasKeys = !!(deepgramKey && anthropicKey);
+  const NO_KEYS = 'Faltan las claves de API: ábrelas en Ajustes';
+  const anthropic = hasKeys ? new Anthropic({ apiKey: anthropicKey }) : null;
   const authorized = (url) => !token || new URL(url, 'http://x').searchParams.get('t') === token;
 
   // Solo se guarda el texto, nunca el audio.
@@ -115,6 +117,10 @@ export async function startServer({
         req.resume();
         return res.writeHead(403, { Connection: 'close' }).end();
       }
+      if (!hasKeys) {
+        req.resume();
+        return res.writeHead(400, { 'Content-Type': 'application/json', Connection: 'close' }).end(JSON.stringify({ error: NO_KEYS }));
+      }
       return transcribeFile(req, res);
     }
     const pathname = req.url.split('?')[0];
@@ -139,6 +145,11 @@ export async function startServer({
   });
 
   wss.on('connection', (client) => {
+    if (!hasKeys) {
+      client.send(JSON.stringify({ type: 'error', text: NO_KEYS }));
+      client.close();
+      return;
+    }
     let context = '';
     const history = []; // últimas intervenciones transcritas
     let pending = ''; // segmentos finales de la intervención en curso

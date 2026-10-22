@@ -31,6 +31,11 @@
   button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
   button:disabled { opacity: .45; cursor: default; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  dialog { border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--fg); padding: var(--space); width: min(480px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgb(0 0 0 / .45); }
+  dialog form { display: grid; gap: 12px; }
+  dialog label { display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
+  dialog h2 { margin: 0; }
   .hint { color: var(--muted); font-size: 13px; }
   label.check { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; color: var(--muted); font-size: 15px; }
   input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
@@ -47,7 +52,7 @@
   #transcript .interim { opacity: .55; }
 
   .ask { display: flex; gap: 8px; }
-  input[type=text] { flex: 1; min-width: 0; min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--fg); font: inherit; }
+  input[type=text], input[type=password], select { flex: 1; min-width: 0; min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--fg); font: inherit; }
   textarea { width: 100%; min-height: 120px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--fg); font: inherit; font-size: 15px; resize: vertical; }
 
   details { border-top: 1px solid var(--line); padding-top: var(--space); }
@@ -66,6 +71,7 @@
 <div class="wrap">
   <header>
     <h1>Copiloto Q&amp;A</h1>
+    <button id="settingsBtn" hidden aria-label="Ajustes" title="Ajustes">⚙</button>
     <div class="status" role="status" aria-live="polite"><span class="dot" id="dot" data-state="idle"></span><span id="status">Detenido</span></div>
   </header>
 
@@ -115,6 +121,7 @@
         <label class="check"><input type="checkbox" id="diarize"> Separar hablantes</label>
         <button id="transcribe" class="primary" disabled>Transcribir</button>
         <span id="fstatus" class="note" role="status" aria-live="polite"></span>
+        <button id="openDir" hidden>Abrir carpeta</button>
       </div>
       <textarea id="fileText" style="min-height:160px" placeholder="La transcripción aparecerá aquí" aria-label="Transcripción del archivo" readonly></textarea>
       <div class="row">
@@ -125,6 +132,25 @@
     </div>
   </details>
 </div>
+<dialog id="settings" aria-labelledby="h-settings">
+  <form method="dialog" id="settingsForm">
+    <h2 id="h-settings">Ajustes</h2>
+    <label>Clave de Deepgram <input type="password" id="sDg" autocomplete="off"></label>
+    <label>Clave de Anthropic <input type="password" id="sAn" autocomplete="off"></label>
+    <label>Idioma
+      <select id="sLang"><option value="es">Español</option><option value="en">English</option><option value="multi">Multilingüe</option></select>
+    </label>
+    <label>Modelo <input type="text" id="sModel" autocomplete="off"></label>
+    <label>Carpeta de transcripciones
+      <div class="row"><input type="text" id="sDir" readonly><button type="button" id="sPick">Cambiar…</button></div>
+    </label>
+    <div class="note warn" id="sErr" role="alert" hidden></div>
+    <div class="row">
+      <button type="submit" class="primary" id="sSave">Guardar</button>
+      <button type="button" id="sCancel">Cancelar</button>
+    </div>
+  </form>
+</dialog>
 <script>
 // Se guardan los nodos al cargar: al mover el panel a la ventana flotante, getElementById deja de encontrarlos.
 const nodes = {};
@@ -210,6 +236,50 @@ const authToken = new URLSearchParams(location.search).get('t');
 if (isDesktop) {
   $('start').textContent = 'Escuchar audio del sistema';
   $('micHint').hidden = false;
+  $('settingsBtn').hidden = false;
+  initSettings();
+}
+
+async function initSettings() {
+  const dlg = $('settings');
+  const showErr = (t) => { $('sErr').textContent = t || ''; $('sErr').hidden = !t; };
+  async function openSettings() {
+    const c = await window.desktop.getConfig();
+    $('sDg').value = $('sAn').value = '';
+    $('sDg').placeholder = c.hasDeepgramKey ? 'Guardada: dejar vacío para no cambiar' : 'Pega tu clave';
+    $('sAn').placeholder = c.hasAnthropicKey ? 'Guardada: dejar vacío para no cambiar' : 'Pega tu clave';
+    $('sLang').value = c.language;
+    $('sModel').value = c.model;
+    $('sDir').value = c.transcriptsDir;
+    showErr('');
+    if (!dlg.open) dlg.showModal();
+    return c;
+  }
+  $('settingsBtn').onclick = () => openSettings().catch((e) => setStatus('Error: ' + e.message));
+  $('sCancel').onclick = () => dlg.close();
+  $('sPick').onclick = async () => {
+    try { const d = await window.desktop.pickTranscriptsDir(); if (d) $('sDir').value = d; } catch (e) { showErr(e.message); }
+  };
+  $('settingsForm').onsubmit = async (e) => {
+    e.preventDefault();
+    $('sSave').disabled = true;
+    showErr('');
+    try {
+      // Al guardar se reinicia el servidor y la ventana se recarga con el token nuevo.
+      await window.desktop.saveConfig({
+        deepgramKey: $('sDg').value, anthropicKey: $('sAn').value,
+        language: $('sLang').value, model: $('sModel').value, transcriptsDir: $('sDir').value,
+      });
+    } catch (err) {
+      showErr(err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''));
+      $('sSave').disabled = false;
+    }
+  };
+  $('openDir').onclick = () => window.desktop.openTranscripts().catch((e) => fstatus('Error: ' + e.message));
+  try {
+    const c = await window.desktop.getConfig();
+    if (!c.hasDeepgramKey || !c.hasAnthropicKey) await openSettings();
+  } catch {}
 }
 let ws, audioCtx, streams = [], paused = false, interimEl = null;
 
@@ -224,7 +294,7 @@ function connect() {
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => { pushContext(); resolve(); };
     ws.onerror = reject;
-    ws.onclose = () => setStatus('Desconectado');
+    ws.onclose = () => { if (!$('status').textContent.startsWith('Error')) setStatus('Desconectado'); };
     ws.onmessage = (e) => handle(JSON.parse(e.data));
   });
 }
@@ -348,6 +418,7 @@ $('transcribe').onclick = () => {
     try { r = JSON.parse(xhr.responseText); } catch {}
     if (xhr.status !== 200) return fstatus('Error: ' + (r.error || xhr.status));
     fileText.value = r.text || '(sin texto detectado)';
+    $('openDir').hidden = !(isDesktop && r.saved);
     fstatus((r.duration ? `Listo (${Math.round(r.duration / 60)} min de audio)` : 'Listo') + (r.saved ? ` · guardado en transcripciones/${r.saved}` : ''));
     ['copyText', 'dlText', 'toCtx'].forEach((id) => ($(id).disabled = !r.text));
   };

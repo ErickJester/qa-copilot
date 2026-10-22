@@ -1,4 +1,10 @@
-const { contextBridge } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
-// Las fases 4 y 5 amplían esta API (config, carpeta de transcripciones, ventana flotante).
-contextBridge.exposeInMainWorld('desktop', { isDesktop: true });
+// Solo se exponen funciones concretas, nunca ipcRenderer. La Fase 5 añade la ventana flotante.
+contextBridge.exposeInMainWorld('desktop', {
+  isDesktop: true,
+  getConfig: () => ipcRenderer.invoke('config:get'),
+  saveConfig: (cfg) => ipcRenderer.invoke('config:save', cfg),
+  pickTranscriptsDir: () => ipcRenderer.invoke('transcripts:pick'),
+  openTranscripts: () => ipcRenderer.invoke('transcripts:open'),
+});
