@@ -202,6 +202,7 @@ $('docs').onchange = async (e) => {
 };
 renderDocs();
 
+const authToken = new URLSearchParams(location.search).get('t');
 let ws, audioCtx, streams = [], paused = false, interimEl = null;
 
 function setStatus(t, state) {
@@ -211,7 +212,7 @@ function setStatus(t, state) {
 
 function connect() {
   return new Promise((resolve, reject) => {
-    ws = new WebSocket(`ws://${location.host}/ws`);
+    ws = new WebSocket(`ws://${location.host}/ws${authToken ? `?t=${encodeURIComponent(authToken)}` : ''}`);
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => { pushContext(); resolve(); };
     ws.onerror = reject;
@@ -317,7 +318,7 @@ $('transcribe').onclick = () => {
   ['copyText', 'dlText', 'toCtx'].forEach((id) => ($(id).disabled = true));
   fstatus('Subiendo 0%');
   const xhr = new XMLHttpRequest();
-  xhr.open('POST', `/transcribe?diarize=${$('diarize').checked ? 1 : 0}&name=${encodeURIComponent(f.name)}`);
+  xhr.open('POST', `/transcribe?diarize=${$('diarize').checked ? 1 : 0}&name=${encodeURIComponent(f.name)}${authToken ? `&t=${encodeURIComponent(authToken)}` : ''}`);
   xhr.setRequestHeader('Content-Type', f.type || 'application/octet-stream');
   xhr.upload.onprogress = (e) => e.lengthComputable && fstatus(`Subiendo ${Math.round((e.loaded / e.total) * 100)}%`);
   xhr.upload.onload = () => fstatus('Transcribiendo en Deepgram...');

@@ -3,8 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "main": "electron/main.js",
   "scripts": {
-    "start": "node --env-file=.env server.js"
+    "start": "node --env-file=.env server.js",
+    "dev": "electron ."
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.70.0",
