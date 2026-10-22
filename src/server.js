@@ -46,6 +46,8 @@ const INTERROGATIVE = [
 // Verbos de petición o auxiliares al inicio de la frase ("puedes explicar…", "can you…").
 const OPENER = [
   'puedes', 'podrías?', 'podrían', 'explica', 'explícame', 'explícanos', 'cuéntame', 'cuéntanos', 'háblanos', 'dime', 'dinos',
+  // Preguntas de sí/no que no llevan interrogativa.
+  'ser[ií]a\\s+posible', 'es\\s+posible', 'hay\\s+alg[uú]n[oa]?', 'tienen\\s+(?:pensado|previsto)', 'han\\s+(?:considerado|pensado|probado|evaluado)',
   '(?:can|could|would|will|do|does|did|is|are|was|were|should|have|has)\\s+(?:you|we|they|there|it|this|that|your|the|any)',
 ].join('|');
 const INDIRECT = [
@@ -60,6 +62,8 @@ export const QUESTION_RE = new RegExp(
     // "no sé cómo…" o "no recuerdo qué…" son afirmaciones con interrogativa indirecta.
     `^\\s*${FILLER}(?!(?:no\\s+(?:s[eé]|sabemos|recuerdo)|ni\\s+idea|i\\s+don'?t\\s+know)${WORD_END})(?:\\S+\\s+){0,3}(?:${INTERROGATIVE})${WORD_END}`,
     `^\\s*${FILLER}(?:${OPENER})${WORD_END}`,
+    // "…, pero cómo escalaría": la interrogativa tras una conjunción vale en cualquier posición.
+    `(?:^|[^\\p{L}])(?:pero|y|entonces|pues)\\s+(?:${INTERROGATIVE})${WORD_END}`,
     `(?:^|[^\\p{L}])(?:${INDIRECT})${WORD_END}`,
   ].join('|'),
   'iu',
