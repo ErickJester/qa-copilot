@@ -9,5 +9,9 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.70.0",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.15.3"
   }
 }
