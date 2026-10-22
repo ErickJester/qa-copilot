@@ -144,6 +144,10 @@ export async function startServer({
     verifyClient: ({ req }) => authorized(req.url),
   });
 
+  // ws reenvía los errores del servidor HTTP (p. ej. EADDRINUSE en listen) al wss: sin este listener
+  // saldrían como excepción no capturada. Quien llama ya los recibe por el reject de startServer.
+  wss.on('error', () => {});
+
   wss.on('connection', (client) => {
     if (!hasKeys) {
       client.send(JSON.stringify({ type: 'error', text: NO_KEYS }));
