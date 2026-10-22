@@ -117,7 +117,8 @@ export async function startServer({
       }
       return transcribeFile(req, res);
     }
-    const path = req.url === '/' ? '/index.html' : req.url.split('?')[0];
+    const pathname = req.url.split('?')[0];
+    const path = pathname === '/' ? '/index.html' : pathname;
     const file = normalize(join(publicDir, path));
     if (!file.startsWith(publicDir)) return res.writeHead(403).end();
     try {
