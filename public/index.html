@@ -31,6 +31,7 @@
   button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
   button:disabled { opacity: .45; cursor: default; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hint { color: var(--muted); font-size: 13px; }
   label.check { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; color: var(--muted); font-size: 15px; }
   input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
 
@@ -71,8 +72,10 @@
   <div class="bar">
     <button id="start" class="primary">Compartir pestaña y empezar</button>
     <button id="pause" disabled>Pausar</button>
+    <button id="stop" disabled>Detener</button>
     <button id="float">Ventana flotante</button>
     <label class="check"><input type="checkbox" id="mic"> Incluir mi micrófono</label>
+    <span class="hint" id="micHint" hidden>usa auriculares para evitar eco</span>
   </div>
 
   <div class="grid">
@@ -202,7 +205,12 @@ $('docs').onchange = async (e) => {
 };
 renderDocs();
 
+const isDesktop = !!window.desktop?.isDesktop;
 const authToken = new URLSearchParams(location.search).get('t');
+if (isDesktop) {
+  $('start').textContent = 'Escuchar audio del sistema';
+  $('micHint').hidden = false;
+}
 let ws, audioCtx, streams = [], paused = false, interimEl = null;
 
 function setStatus(t, state) {
@@ -249,12 +257,13 @@ $('start').onclick = async () => {
   try {
     try { localStorage.setItem('ctx', ctx.value); } catch {}
     const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    streams = [display];
     display.getVideoTracks().forEach((t) => t.stop());
     if (!display.getAudioTracks().length) {
-      setStatus('Error: no se capturó audio. Marca "Compartir audio de la pestaña".');
+      stop();
+      setStatus(isDesktop ? 'Error: no se pudo capturar el audio del sistema.' : 'Error: no se capturó audio. Marca "Compartir audio de la pestaña".');
       return;
     }
-    streams = [display];
     if ($('mic').checked) {
       streams.push(await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false, latency: 0 },
@@ -266,7 +275,7 @@ $('start').onclick = async () => {
     await audioCtx.audioWorklet.addModule('worklet.js');
     const node = new AudioWorkletNode(audioCtx, 'pcm-sender', { numberOfOutputs: 0 });
     node.port.onmessage = (e) => {
-      if (!paused && ws.readyState === WebSocket.OPEN) ws.send(e.data);
+      if (!paused && ws?.readyState === WebSocket.OPEN) ws.send(e.data);
     };
     for (const s of streams) {
       audioCtx.createMediaStreamSource(new MediaStream(s.getAudioTracks())).connect(node);
@@ -275,20 +284,31 @@ $('start').onclick = async () => {
 
     $('start').disabled = true;
     $('pause').disabled = false;
+    $('stop').disabled = false;
     setStatus('Escuchando', 'live');
   } catch (err) {
+    stop();
     setStatus('Error: ' + err.message);
   }
 };
 
 function stop() {
   streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+  streams = [];
   audioCtx?.close();
+  audioCtx = null;
+  if (ws) ws.onclose = null; // que el cierre manual no pise el estado "Detenido"
   ws?.close();
+  ws = null;
+  paused = false;
+  $('pause').textContent = 'Pausar';
   $('start').disabled = false;
   $('pause').disabled = true;
+  $('stop').disabled = true;
   setStatus('Detenido', 'idle');
 }
+
+$('stop').onclick = stop;
 
 $('pause').onclick = () => {
   paused = !paused;

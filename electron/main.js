@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, session, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,6 +63,26 @@ async function main() {
     token,
   });
   const origin = `http://127.0.0.1:${server.port}`;
+
+  // Audio del sistema (loopback) sin selector. Si falla, cb({}) hace que getDisplayMedia rechace en vez de colgarse.
+  session.defaultSession.setDisplayMediaRequestHandler(async (_req, cb) => {
+    try {
+      const [screen] = await desktopCapturer.getSources({ types: ['screen'] });
+      cb(screen ? { video: screen, audio: 'loopback' } : {});
+    } catch (err) {
+      console.error('No se pudo obtener la pantalla para el audio del sistema', err);
+      cb({});
+    }
+  });
+
+  // Solo el origen local puede pedir captura; el resto se deniega.
+  const allowed = new Set(['media', 'display-capture']);
+  const isLocal = (url) => { try { return new URL(url).origin === origin; } catch { return false; } };
+  session.defaultSession.setPermissionRequestHandler((wc, permission, cb, details) => {
+    cb(allowed.has(permission) && isLocal(details.requestingUrl || wc.getURL()));
+  });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin) =>
+    allowed.has(permission) && isLocal(requestingOrigin));
 
   win = new BrowserWindow({
     width: 1100,
