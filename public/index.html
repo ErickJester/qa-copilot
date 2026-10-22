@@ -53,6 +53,8 @@
   #transcript { max-height: 340px; overflow: auto; color: var(--muted); font-size: 15px; }
   #transcript div { padding: 2px 0; }
   #transcript .interim { opacity: .55; }
+  #transcript .final { cursor: pointer; border-radius: var(--radius); }
+  #transcript .final:hover { background: var(--surface); }
 
   .ask { display: flex; gap: 8px; }
   input[type=text], input[type=password], select { flex: 1; min-width: 0; min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--fg); font: inherit; }
@@ -316,8 +318,13 @@ function handle(m) {
       box.appendChild(interimEl);
     }
     interimEl.textContent = m.text;
-    interimEl.className = m.final ? '' : 'interim';
-    if (m.final) interimEl = null;
+    interimEl.className = m.final ? 'final' : 'interim';
+    if (m.final) {
+      // Plan B cuando la detección falla: clic o Enter en una frase final la envía como pregunta.
+      interimEl.tabIndex = 0;
+      interimEl.title = 'Responder a esta frase';
+      interimEl = null;
+    }
     box.scrollTop = box.scrollHeight;
   } else if (m.type === 'answer_start') {
     $('question').textContent = m.question;
@@ -476,14 +483,25 @@ $('pause').onclick = () => {
   setStatus(paused ? 'En pausa (sin enviar audio)' : 'Escuchando', paused ? 'idle' : 'live');
 };
 
-async function ask() {
-  const text = $('manual').value.trim();
-  if (!text) return;
+async function sendAsk(text) {
   if (!ws || ws.readyState !== WebSocket.OPEN) await connect();
   pushContext();
   ws.send(JSON.stringify({ type: 'ask', text }));
+}
+
+async function ask() {
+  const text = $('manual').value.trim();
+  if (!text) return;
+  await sendAsk(text);
   $('manual').value = '';
 }
+
+const answerFromLine = (e) => {
+  const line = e.target.closest?.('#transcript .final');
+  if (line) sendAsk(line.textContent.trim()).catch((err) => setStatus('Error: ' + err.message));
+};
+$('transcript').onclick = answerFromLine;
+$('transcript').onkeydown = (e) => e.key === 'Enter' && answerFromLine(e);
 
 // --- Transcripción de archivos ---
 const fileInput = $('file'), fileText = $('fileText');
