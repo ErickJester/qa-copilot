@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Copiloto Q&A</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #0f172a; --muted: #475569; --line: #e2e8f0; --surface: #f8fafc;
+    --accent: #2563eb; --on-accent: #ffffff; --live: #dc2626; --ok: #16a34a;
+    --space: 16px; --radius: 6px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0b0f17; --fg: #e5e9f0; --muted: #94a3b8; --line: #1f2937; --surface: #111827; --accent: #60a5fa; --on-accent: #0b0f17; --live: #f87171; --ok: #4ade80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: var(--space); display: grid; gap: var(--space); }
+
+  header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 16px; font-weight: 600; margin: 0; }
+  .status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot[data-state="live"] { background: var(--live); }
+  .dot[data-state="err"] { background: var(--live); outline: 2px solid var(--live); outline-offset: 2px; }
+
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding-bottom: var(--space); border-bottom: 1px solid var(--line); }
+  button, .btn { min-height: 44px; padding: 0 16px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg); color: var(--fg); font: inherit; font-size: 15px; cursor: pointer; transition: background-color .15s, border-color .15s; }
+  button:hover:not(:disabled) { background: var(--surface); border-color: var(--muted); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
+  button:disabled { opacity: .45; cursor: default; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  label.check { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; color: var(--muted); font-size: 15px; }
+  input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+
+  .grid { display: grid; grid-template-columns: 3fr 2fr; gap: var(--space); }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  h2 { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  .panel { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space); min-height: 220px; }
+  #question { color: var(--muted); font-size: 14px; margin-bottom: 8px; min-height: 21px; }
+  #answer { font-size: 22px; line-height: 1.45; white-space: pre-wrap; }
+  #answer.empty { color: var(--muted); font-size: 16px; }
+  #transcript { max-height: 340px; overflow: auto; color: var(--muted); font-size: 15px; }
+  #transcript div { padding: 2px 0; }
+  #transcript .interim { opacity: .55; }
+
+  .ask { display: flex; gap: 8px; }
+  input[type=text] { flex: 1; min-width: 0; min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--fg); font: inherit; }
+  textarea { width: 100%; min-height: 120px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--fg); font: inherit; font-size: 15px; resize: vertical; }
+
+  details { border-top: 1px solid var(--line); padding-top: var(--space); }
+  summary { cursor: pointer; font-weight: 600; font-size: 15px; min-height: 28px; }
+  details > .body { display: grid; gap: 8px; margin-top: 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .note { color: var(--muted); font-size: 14px; }
+  .note.warn { color: var(--live); }
+  .doclist { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+  .doclist li { display: flex; justify-content: space-between; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 4px 4px 12px; font-size: 14px; }
+  .doclist button { min-height: 36px; padding: 0 12px; font-size: 14px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Copiloto Q&amp;A</h1>
+    <div class="status" role="status" aria-live="polite"><span class="dot" id="dot" data-state="idle"></span><span id="status">Detenido</span></div>
+  </header>
+
+  <div class="bar">
+    <button id="start" class="primary">Compartir pestaña y empezar</button>
+    <button id="pause" disabled>Pausar</button>
+    <button id="float">Ventana flotante</button>
+    <label class="check"><input type="checkbox" id="mic"> Incluir mi micrófono</label>
+  </div>
+
+  <div class="grid">
+    <section class="panel" id="answerPanel" aria-labelledby="h-answer">
+      <h2 id="h-answer">Respuesta sugerida</h2>
+      <div id="question"></div>
+      <div id="answer" class="empty" aria-live="polite">Esperando una pregunta.</div>
+    </section>
+    <section class="panel" aria-labelledby="h-tr">
+      <h2 id="h-tr">Transcripción en vivo</h2>
+      <div id="transcript"></div>
+    </section>
+  </div>
+
+  <div class="ask">
+    <input type="text" id="manual" placeholder="Pregunta manual o ensayo (Enter)" aria-label="Pregunta manual">
+    <button id="ask">Preguntar</button>
+  </div>
+
+  <details id="ctxBox" open>
+    <summary>Contexto del proyecto</summary>
+    <div class="body">
+      <textarea id="ctx" aria-label="Contexto del proyecto" placeholder="Qué es el proyecto, arquitectura, decisiones, limitaciones, resultados, preguntas difíciles..."></textarea>
+      <div class="row">
+        <input type="file" id="docs" accept=".md,.markdown,.txt,text/markdown,text/plain" multiple aria-label="Añadir archivos de contexto">
+      </div>
+      <ul id="docList" class="doclist"></ul>
+      <span id="ctxInfo" class="note" role="status" aria-live="polite"></span>
+    </div>
+  </details>
+
+  <details>
+    <summary>Transcribir archivo de audio</summary>
+    <div class="body">
+      <div class="row">
+        <input type="file" id="file" accept="audio/*,.m4a,.mp3,.wav,.mp4,.ogg,.flac" aria-label="Archivo de audio">
+        <label class="check"><input type="checkbox" id="diarize"> Separar hablantes</label>
+        <button id="transcribe" class="primary" disabled>Transcribir</button>
+        <span id="fstatus" class="note" role="status" aria-live="polite"></span>
+      </div>
+      <textarea id="fileText" style="min-height:160px" placeholder="La transcripción aparecerá aquí" aria-label="Transcripción del archivo" readonly></textarea>
+      <div class="row">
+        <button id="copyText" disabled>Copiar</button>
+        <button id="dlText" disabled>Descargar .txt</button>
+        <button id="toCtx" disabled>Añadir al contexto</button>
+      </div>
+    </div>
+  </details>
+</div>
+<script>
+// Se guardan los nodos al cargar: al mover el panel a la ventana flotante, getElementById deja de encontrarlos.
+const nodes = {};
+document.querySelectorAll('[id]').forEach((el) => (nodes[el.id] = el));
+const $ = (id) => nodes[id];
+const ctx = $('ctx');
+
+// Ventana flotante siempre encima (Document Picture-in-Picture: Chrome/Edge 116+).
+const floatBtn = $('float');
+if (!('documentPictureInPicture' in window)) floatBtn.hidden = true;
+floatBtn.onclick = async () => {
+  if (documentPictureInPicture.window) return documentPictureInPicture.window.close();
+  const pip = await documentPictureInPicture.requestWindow({ width: 460, height: 320 });
+  document.querySelectorAll('style').forEach((s) => pip.document.head.appendChild(s.cloneNode(true)));
+  pip.document.body.style.cssText = 'margin:0;padding:12px;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif';
+  const panel = $('answerPanel'), home = panel.parentNode, next = panel.nextSibling;
+  panel.style.cssText = 'border:0;padding:0;min-height:0';
+  pip.document.body.append(panel);
+  floatBtn.textContent = 'Cerrar ventana flotante';
+  pip.addEventListener('pagehide', () => {
+    panel.removeAttribute('style');
+    home.insertBefore(panel, next);
+    floatBtn.textContent = 'Ventana flotante';
+  });
+};
+let docs = [];
+try {
+  ctx.value = localStorage.getItem('ctx') ?? '';
+  docs = JSON.parse(localStorage.getItem('docs') ?? '[]');
+} catch {}
+if (ctx.value || docs.length) $('ctxBox').open = false;
+
+const MAX_DOC_CHARS = 400000; // ~100k tokens: tope duro para no desbordar el modelo
+const WARN_TOKENS = 25000;    // a partir de aquí la primera palabra tarda más
+
+function buildContext() {
+  return [ctx.value, ...docs.map((d) => `=== ARCHIVO: ${d.name} ===\n${d.text}`)].filter(Boolean).join('\n\n');
+}
+
+function renderDocs() {
+  const list = $('docList');
+  list.replaceChildren(...docs.map((d, i) => {
+    const li = document.createElement('li');
+    const label = document.createElement('span');
+    label.textContent = `${d.name} · ${Math.round(d.text.length / 4).toLocaleString('es')} tokens`;
+    const btn = document.createElement('button');
+    btn.textContent = 'Quitar';
+    btn.onclick = () => { docs.splice(i, 1); saveDocs(); };
+    li.append(label, btn);
+    return li;
+  }));
+  const tokens = Math.round(buildContext().length / 4);
+  const info = $('ctxInfo');
+  info.textContent = `Contexto total: ~${tokens.toLocaleString('es')} tokens` +
+    (tokens > WARN_TOKENS ? ' · grande: las respuestas empezarán más lento' : '');
+  info.className = 'note' + (tokens > WARN_TOKENS ? ' warn' : '');
+}
+
+function pushContext() {
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'context', text: buildContext() }));
+}
+
+function saveDocs() {
+  try { localStorage.setItem('docs', JSON.stringify(docs)); } catch { setStatus('Error: los documentos no caben en el almacenamiento del navegador'); }
+  renderDocs();
+  pushContext();
+}
+
+$('docs').onchange = async (e) => {
+  for (const f of e.target.files) {
+    if (f.size > MAX_DOC_CHARS) { $('ctxInfo').textContent = `${f.name} supera 400 KB y se omitió`; continue; }
+    const text = await f.text();
+    const i = docs.findIndex((d) => d.name === f.name);
+    if (i >= 0) docs[i] = { name: f.name, text }; else docs.push({ name: f.name, text });
+  }
+  e.target.value = '';
+  saveDocs();
+};
+renderDocs();
+
+let ws, audioCtx, streams = [], paused = false, interimEl = null;
+
+function setStatus(t, state) {
+  $('status').textContent = t;
+  $('dot').dataset.state = state ?? (t.startsWith('Error') ? 'err' : t.startsWith('Escuchando') ? 'live' : 'idle');
+}
+
+function connect() {
+  return new Promise((resolve, reject) => {
+    ws = new WebSocket(`ws://${location.host}/ws`);
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => { pushContext(); resolve(); };
+    ws.onerror = reject;
+    ws.onclose = () => setStatus('Desconectado');
+    ws.onmessage = (e) => handle(JSON.parse(e.data));
+  });
+}
+
+function handle(m) {
+  if (m.type === 'transcript') {
+    const box = $('transcript');
+    if (!interimEl) {
+      interimEl = document.createElement('div');
+      box.appendChild(interimEl);
+    }
+    interimEl.textContent = m.text;
+    interimEl.className = m.final ? '' : 'interim';
+    if (m.final) interimEl = null;
+    box.scrollTop = box.scrollHeight;
+  } else if (m.type === 'answer_start') {
+    $('question').textContent = m.question;
+    $('answer').textContent = '';
+    $('answer').classList.remove('empty');
+  } else if (m.type === 'answer_delta') {
+    $('answer').textContent += m.text;
+  } else if (m.type === 'status') {
+    setStatus(m.text, $('dot').dataset.state);
+  } else if (m.type === 'error') {
+    setStatus('Error: ' + m.text);
+  }
+}
+
+$('start').onclick = async () => {
+  try {
+    try { localStorage.setItem('ctx', ctx.value); } catch {}
+    const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    display.getVideoTracks().forEach((t) => t.stop());
+    if (!display.getAudioTracks().length) {
+      setStatus('Error: no se capturó audio. Marca "Compartir audio de la pestaña".');
+      return;
+    }
+    streams = [display];
+    if ($('mic').checked) {
+      streams.push(await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false, latency: 0 },
+      }));
+    }
+
+    await connect();
+    audioCtx = new AudioContext({ sampleRate: 16000, latencyHint: 'interactive' });
+    await audioCtx.audioWorklet.addModule('worklet.js');
+    const node = new AudioWorkletNode(audioCtx, 'pcm-sender', { numberOfOutputs: 0 });
+    node.port.onmessage = (e) => {
+      if (!paused && ws.readyState === WebSocket.OPEN) ws.send(e.data);
+    };
+    for (const s of streams) {
+      audioCtx.createMediaStreamSource(new MediaStream(s.getAudioTracks())).connect(node);
+    }
+    display.getAudioTracks()[0].onended = stop;
+
+    $('start').disabled = true;
+    $('pause').disabled = false;
+    setStatus('Escuchando', 'live');
+  } catch (err) {
+    setStatus('Error: ' + err.message);
+  }
+};
+
+function stop() {
+  streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+  audioCtx?.close();
+  ws?.close();
+  $('start').disabled = false;
+  $('pause').disabled = true;
+  setStatus('Detenido', 'idle');
+}
+
+$('pause').onclick = () => {
+  paused = !paused;
+  $('pause').textContent = paused ? 'Reanudar' : 'Pausar';
+  setStatus(paused ? 'En pausa (sin enviar audio)' : 'Escuchando', paused ? 'idle' : 'live');
+};
+
+async function ask() {
+  const text = $('manual').value.trim();
+  if (!text) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) await connect();
+  pushContext();
+  ws.send(JSON.stringify({ type: 'ask', text }));
+  $('manual').value = '';
+}
+
+// --- Transcripción de archivos ---
+const fileInput = $('file'), fileText = $('fileText');
+const fstatus = (t) => ($('fstatus').textContent = t);
+fileInput.onchange = () => ($('transcribe').disabled = !fileInput.files.length);
+
+$('transcribe').onclick = () => {
+  const f = fileInput.files[0];
+  if (!f) return;
+  $('transcribe').disabled = true;
+  fileText.value = '';
+  ['copyText', 'dlText', 'toCtx'].forEach((id) => ($(id).disabled = true));
+  fstatus('Subiendo 0%');
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', `/transcribe?diarize=${$('diarize').checked ? 1 : 0}&name=${encodeURIComponent(f.name)}`);
+  xhr.setRequestHeader('Content-Type', f.type || 'application/octet-stream');
+  xhr.upload.onprogress = (e) => e.lengthComputable && fstatus(`Subiendo ${Math.round((e.loaded / e.total) * 100)}%`);
+  xhr.upload.onload = () => fstatus('Transcribiendo en Deepgram...');
+  xhr.onload = () => {
+    $('transcribe').disabled = false;
+    let r = {};
+    try { r = JSON.parse(xhr.responseText); } catch {}
+    if (xhr.status !== 200) return fstatus('Error: ' + (r.error || xhr.status));
+    fileText.value = r.text || '(sin texto detectado)';
+    fstatus((r.duration ? `Listo (${Math.round(r.duration / 60)} min de audio)` : 'Listo') + (r.saved ? ` · guardado en transcripciones/${r.saved}` : ''));
+    ['copyText', 'dlText', 'toCtx'].forEach((id) => ($(id).disabled = !r.text));
+  };
+  xhr.onerror = () => { $('transcribe').disabled = false; fstatus('Error de red'); };
+  xhr.send(f);
+};
+$('copyText').onclick = () => navigator.clipboard.writeText(fileText.value);
+$('dlText').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([fileText.value], { type: 'text/plain' }));
+  a.download = (fileInput.files[0]?.name.replace(/\.[^.]+$/, '') || 'transcripcion') + '.txt';
+  a.click();
+};
+$('toCtx').onclick = () => {
+  ctx.value += (ctx.value ? '\n\n' : '') + 'TRANSCRIPCIÓN DE REFERENCIA:\n' + fileText.value;
+  ctx.onchange();
+  fstatus('Añadido al contexto');
+};
+
+$('ask').onclick = ask;
+$('manual').onkeydown = (e) => e.key === 'Enter' && ask();
+ctx.onchange = () => {
+  try { localStorage.setItem('ctx', ctx.value); } catch {}
+  renderDocs();
+  pushContext();
+};
+</script>
+</body>
+</html>
