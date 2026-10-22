@@ -36,6 +36,9 @@
   dialog form { display: grid; gap: 12px; }
   dialog label { display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
   dialog h2 { margin: 0; }
+  .bar select { min-height: 44px; max-width: 220px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--fg); font: inherit; font-size: 15px; }
+  .meter { width: 64px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; flex: none; }
+  .meter i { display: block; height: 100%; width: 0; background: var(--ok); }
   .hint { color: var(--muted); font-size: 13px; }
   label.check { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; color: var(--muted); font-size: 15px; }
   input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
@@ -72,15 +75,18 @@
   <header>
     <h1>Copiloto Q&amp;A</h1>
     <button id="settingsBtn" hidden aria-label="Ajustes" title="Ajustes">⚙</button>
-    <div class="status" role="status" aria-live="polite"><span class="dot" id="dot" data-state="idle"></span><span id="status">Detenido</span></div>
+    <div class="status" role="status" aria-live="polite"><span class="dot" id="dot" data-state="idle"></span><span id="status">Detenido</span><span class="meter" title="Nivel de entrada" aria-hidden="true"><i id="level"></i></span></div>
   </header>
 
   <div class="bar">
+    <label class="check">Fuente de audio <select id="src" aria-label="Fuente de audio"></select></label>
     <button id="start" class="primary">Compartir pestaña y empezar</button>
     <button id="pause" disabled>Pausar</button>
     <button id="stop" disabled>Detener</button>
     <button id="float">Ventana flotante</button>
     <label class="check"><input type="checkbox" id="mic"> Incluir mi micrófono</label>
+    <select id="micDev" aria-label="Micrófono"></select>
+    <button id="refreshDev" hidden>Actualizar dispositivos</button>
     <span class="hint" id="micHint" hidden>usa auriculares para evitar eco</span>
   </div>
 
@@ -236,7 +242,6 @@ renderDocs();
 const isDesktop = !!window.desktop?.isDesktop;
 const authToken = new URLSearchParams(location.search).get('t');
 if (isDesktop) {
-  $('start').textContent = 'Escuchar audio del sistema';
   $('micHint').hidden = false;
   $('settingsBtn').hidden = false;
   initSettings();
@@ -325,21 +330,94 @@ function handle(m) {
   }
 }
 
+// --- Dispositivos de entrada. 'display' = flujo por defecto (audio del sistema / pestaña compartida).
+const DEFAULT_SRC = isDesktop ? 'Audio del sistema' : 'Pestaña compartida';
+const store = {
+  get: (k) => { try { return localStorage.getItem(k) ?? ''; } catch { return ''; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+};
+
+function updateStartLabel() {
+  $('start').textContent = $('src').value !== 'display' ? 'Empezar a escuchar' : isDesktop ? 'Escuchar audio del sistema' : 'Compartir pestaña y empezar';
+}
+
+async function refreshDevices() {
+  let inputs = [];
+  try { inputs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput'); } catch {}
+  // Sin permiso previo los dispositivos llegan sin id ni label: no se pueden elegir hasta pedir permiso.
+  const needsPermission = inputs.some((d) => !d.label || !d.deviceId);
+  inputs = inputs.filter((d) => d.deviceId);
+  const fill = (sel, first, saved) => {
+    sel.replaceChildren(new Option(first[1], first[0]));
+    inputs.forEach((d, i) => sel.add(new Option(d.label || `Dispositivo ${i + 1}`, d.deviceId)));
+    const want = [...sel.options].some((o) => o.value === sel.dataset.cur) ? sel.dataset.cur : saved;
+    // Si el dispositivo guardado ya no existe, vuelve a la opción por defecto.
+    sel.value = [...sel.options].some((o) => o.value === want) ? want : first[0];
+    sel.dataset.cur = sel.value;
+  };
+  fill($('src'), ['display', DEFAULT_SRC], store.get('src'));
+  fill($('micDev'), ['', 'Predeterminado'], store.get('micDev'));
+  $('refreshDev').hidden = !needsPermission;
+  updateStartLabel();
+}
+
+$('src').onchange = () => { $('src').dataset.cur = $('src').value; store.set('src', $('src').value); updateStartLabel(); };
+$('micDev').onchange = () => { $('micDev').dataset.cur = $('micDev').value; store.set('micDev', $('micDev').value); };
+// Sin permiso previo los labels vienen vacíos: se pide el micrófono una vez, se libera y se vuelve a listar.
+$('refreshDev').onclick = async () => {
+  try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop()); } catch {}
+  refreshDevices();
+};
+navigator.mediaDevices.ondevicechange = refreshDevices;
+refreshDevices();
+
+// Indicador de nivel: AnalyserNode sobre las mismas fuentes que van al worklet.
+let meterRaf = 0;
+function startMeter(analyser) {
+  const buf = new Float32Array(analyser.fftSize);
+  const tick = () => {
+    analyser.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (const v of buf) sum += v * v;
+    const rms = Math.sqrt(sum / buf.length);
+    $('level').style.width = `${Math.min(100, Math.sqrt(rms) * 140)}%`;
+    $('level').dataset.rms = rms.toFixed(5);
+    meterRaf = requestAnimationFrame(tick);
+  };
+  tick();
+}
+
 $('start').onclick = async () => {
   try {
     try { localStorage.setItem('ctx', ctx.value); } catch {}
-    const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-    streams = [display];
-    display.getVideoTracks().forEach((t) => t.stop());
-    if (!display.getAudioTracks().length) {
-      stop();
-      setStatus(isDesktop ? 'Error: no se pudo capturar el audio del sistema.' : 'Error: no se capturó audio. Marca "Compartir audio de la pestaña".');
-      return;
+    const src = $('src').value;
+    let main;
+    if (src === 'display') {
+      main = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      streams = [main];
+      main.getVideoTracks().forEach((t) => t.stop());
+      if (!main.getAudioTracks().length) {
+        stop();
+        setStatus(isDesktop ? 'Error: no se pudo capturar el audio del sistema.' : 'Error: no se capturó audio. Marca "Compartir audio de la pestaña".');
+        return;
+      }
+    } else {
+      // Mezcla de línea (p. ej. VoiceMeeter): sin procesado de voz.
+      main = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: { exact: src }, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      });
+      streams = [main];
     }
+    let note = '';
     if ($('mic').checked) {
-      streams.push(await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false, latency: 0 },
-      }));
+      const micId = $('micDev').value;
+      if (src !== 'display' && (micId || 'default') === src) {
+        note = 'Micrófono omitido: es el mismo dispositivo que la fuente';
+      } else {
+        streams.push(await navigator.mediaDevices.getUserMedia({
+          audio: { ...(micId && { deviceId: { exact: micId } }), echoCancellation: true, noiseSuppression: false, autoGainControl: false, latency: 0 },
+        }));
+      }
     }
 
     await connect();
@@ -349,15 +427,19 @@ $('start').onclick = async () => {
     node.port.onmessage = (e) => {
       if (!paused && ws?.readyState === WebSocket.OPEN) ws.send(e.data);
     };
+    const analyser = audioCtx.createAnalyser();
     for (const s of streams) {
-      audioCtx.createMediaStreamSource(new MediaStream(s.getAudioTracks())).connect(node);
+      const source = audioCtx.createMediaStreamSource(new MediaStream(s.getAudioTracks()));
+      source.connect(node);
+      source.connect(analyser);
     }
-    display.getAudioTracks()[0].onended = stop;
+    startMeter(analyser);
+    main.getAudioTracks()[0].onended = stop;
 
     $('start').disabled = true;
     $('pause').disabled = false;
     $('stop').disabled = false;
-    setStatus('Escuchando', 'live');
+    setStatus(note ? `Escuchando · ${note}` : 'Escuchando', 'live');
   } catch (err) {
     stop();
     setStatus('Error: ' + err.message);
@@ -367,6 +449,9 @@ $('start').onclick = async () => {
 function stop() {
   streams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
   streams = [];
+  cancelAnimationFrame(meterRaf);
+  $('level').style.width = '0';
+  $('level').dataset.rms = '0';
   audioCtx?.close();
   audioCtx = null;
   if (ws) ws.onclose = null; // que el cierre manual no pise el estado "Detenido"
