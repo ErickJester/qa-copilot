@@ -35,8 +35,53 @@ export const dgUrl = (language, keyterms = []) => {
   return 'wss://api.deepgram.com/v1/listen?' + params;
 };
 
-const QUESTION_RE =
-  /\?|^\s*(¿|qu[ée]|c[oó]mo|cu[aá]l(es)?|cu[aá]ndo|cu[aá]nto[sa]?|d[oó]nde|qui[eé]n(es)?|por\s?qu[eé]|para\s?qu[eé]|podr[ií]as?|puedes|explica|expl[ií]came|cu[eé]ntame|what|how|why|when|where|who|which|can you|could you|do you|does|is there|explain)\b/i;
+// Detección local e instantánea. Las palabras interrogativas españolas exigen tilde ("que" sin tilde es conjunción).
+// \b no sirve con letras acentuadas, de ahí los lookarounds.
+const FILLER = '(?:(?:y|e|o|oye|bueno|entonces|pues|a ver|ok|okay|vale|so|and|well|but|pero|mira|perdona|disculpa)[,.]?\\s+)*';
+const WORD_END = '(?![\\p{L}\\p{N}])';
+const INTERROGATIVE = [
+  'qué', 'cómo', 'cuál(?:es)?', 'cuándo', 'cuánt[oa]s?', 'dónde', 'quién(?:es)?', 'por\\s?qué', 'para\\s?qué', 'a\\s?quién',
+  'what', 'how', 'why', 'when', 'where', 'who', 'whom', 'whose', 'which',
+].join('|');
+// Verbos de petición o auxiliares al inicio de la frase ("puedes explicar…", "can you…").
+const OPENER = [
+  'puedes', 'podrías?', 'podrían', 'explica', 'explícame', 'explícanos', 'cuéntame', 'cuéntanos', 'háblanos', 'dime', 'dinos',
+  '(?:can|could|would|will|do|does|did|is|are|was|were|should|have|has)\\s+(?:you|we|they|there|it|this|that|your|the|any)',
+].join('|');
+const INDIRECT = [
+  'me gustar[ií]a saber', 'quisiera saber', 'quiero saber', 'quisi[eé]ramos saber', 'nos (?:puedes|podr[ií]as) (?:contar|explicar|decir)',
+  'podr[ií]as (?:contarnos|explicarnos|decirnos)', 'h[aá]blanos de', 'cu[eé]ntanos', 'expl[ií]canos',
+  'tell me', 'tell us', 'walk (?:me|us) through', "i(?:'|’)?d like to know", 'i would like to know', 'can you (?:tell|explain)', 'could you (?:tell|explain)',
+].join('|');
+
+export const QUESTION_RE = new RegExp(
+  [
+    '[?¿]',
+    // "no sé cómo…" o "no recuerdo qué…" son afirmaciones con interrogativa indirecta.
+    `^\\s*${FILLER}(?!(?:no\\s+(?:s[eé]|sabemos|recuerdo)|ni\\s+idea|i\\s+don'?t\\s+know)${WORD_END})(?:\\S+\\s+){0,3}(?:${INTERROGATIVE})${WORD_END}`,
+    `^\\s*${FILLER}(?:${OPENER})${WORD_END}`,
+    `(?:^|[^\\p{L}])(?:${INDIRECT})${WORD_END}`,
+  ].join('|'),
+  'iu',
+);
+
+// Clasificador de respaldo (mismo modelo) para preguntas sin "?" ni fórmula conocida.
+const CLASSIFIER_SYSTEM =
+  'Clasificas fragmentos transcritos de una videollamada. Responde solo SI si el fragmento es una pregunta o una petición (directa o indirecta) que espera respuesta de quien expone; si no, NO.';
+
+export async function classifyQuestion(anthropic, model, previous, text, signal) {
+  const res = await anthropic.messages.create(
+    {
+      model,
+      max_tokens: 3, // este modelo no admite `temperature`
+      system: CLASSIFIER_SYSTEM,
+      messages: [{ role: 'user', content: `Intervención anterior: ${previous || '(ninguna)'}\nIntervención actual: ${text}` }],
+    },
+    { signal },
+  );
+  const out = (res.content.find((b) => b.type === 'text')?.text ?? '').trim().normalize('NFD').replace(/\p{M}/gu, '');
+  return /^SI\b/i.test(out);
+}
 
 const SYSTEM = `Eres un asistente que ayuda a una persona a responder preguntas en vivo durante la exposición de su proyecto.
 Recibirás la última pregunta detectada en la videollamada y, antes, el contexto del proyecto.
@@ -167,6 +212,7 @@ export async function startServer({
     const history = []; // últimas intervenciones transcritas
     let pending = ''; // segmentos finales de la intervención en curso
     let abort = null;
+    let classifier = null; // AbortController del clasificador pendiente
     let dgReady = false;
     const queue = [];
 
@@ -210,13 +256,25 @@ export async function startServer({
       }
     }
 
+    // Cada intervención se decide por una sola vía (regex o clasificador), así que nunca dispara dos respuestas.
     function flushUtterance() {
       const text = pending.trim();
       pending = '';
       if (!text) return;
+      const previous = history.at(-1);
       history.push(text);
       if (history.length > 20) history.shift();
-      if (QUESTION_RE.test(text)) answer(text);
+      classifier?.abort(); // una intervención nueva anula el clasificador pendiente
+      if (QUESTION_RE.test(text)) return answer(text);
+      if (text.split(/\s+/).length < 4) return;
+      const controller = (classifier = new AbortController());
+      classifyQuestion(anthropic, model, previous, text, controller.signal)
+        .then((isQuestion) => {
+          if (isQuestion && !controller.signal.aborted) answer(text);
+        })
+        .catch((err) => {
+          if (!controller.signal.aborted) console.error('clasificador de preguntas', err.message);
+        });
     }
 
     dg.on('message', (data) => {
@@ -254,6 +312,7 @@ export async function startServer({
     client.on('close', () => {
       clearInterval(keepAlive);
       abort?.abort();
+      classifier?.abort();
       if (dg.readyState === WebSocket.OPEN) dg.send(JSON.stringify({ type: 'CloseStream' }));
       dg.close();
     });
