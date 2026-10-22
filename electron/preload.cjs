@@ -7,4 +7,8 @@ contextBridge.exposeInMainWorld('desktop', {
   saveConfig: (cfg) => ipcRenderer.invoke('config:save', cfg),
   pickTranscriptsDir: () => ipcRenderer.invoke('transcripts:pick'),
   openTranscripts: () => ipcRenderer.invoke('transcripts:open'),
+  float: {
+    toggle: () => ipcRenderer.invoke('float:toggle'),
+    onMessage: (cb) => ipcRenderer.on('float:msg', (_e, msg) => cb(msg)),
+  },
 });

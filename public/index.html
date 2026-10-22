@@ -160,8 +160,10 @@ const ctx = $('ctx');
 
 // Ventana flotante siempre encima (Document Picture-in-Picture: Chrome/Edge 116+).
 const floatBtn = $('float');
-if (!('documentPictureInPicture' in window)) floatBtn.hidden = true;
+// En escritorio la flotante es una ventana propia (ver electron/main.js); en web sigue el Document PiP.
+if (!window.desktop?.float && !('documentPictureInPicture' in window)) floatBtn.hidden = true;
 floatBtn.onclick = async () => {
+  if (window.desktop?.float) return window.desktop.float.toggle();
   if (documentPictureInPicture.window) return documentPictureInPicture.window.close();
   const pip = await documentPictureInPicture.requestWindow({ width: 460, height: 320 });
   document.querySelectorAll('style').forEach((s) => pip.document.head.appendChild(s.cloneNode(true)));
