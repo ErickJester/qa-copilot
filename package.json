@@ -6,7 +6,8 @@
   "main": "electron/main.js",
   "scripts": {
     "start": "node --env-file=.env server.js",
-    "dev": "electron ."
+    "dev": "electron .",
+    "dist": "electron-builder --win"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.70.0",
@@ -15,5 +16,24 @@
   "devDependencies": {
     "electron": "^45.0.0",
     "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.copiloto.qa",
+    "productName": "Copiloto QA",
+    "files": [
+      "electron/**",
+      "src/**",
+      "public/**",
+      "package.json",
+      "!.env",
+      "!transcripciones",
+      "!PLAN-*.md"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false
+    }
   }
 }
