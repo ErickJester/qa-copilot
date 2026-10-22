@@ -423,7 +423,8 @@ $('start').onclick = async () => {
     await connect();
     audioCtx = new AudioContext({ sampleRate: 16000, latencyHint: 'interactive' });
     await audioCtx.audioWorklet.addModule('worklet.js');
-    const node = new AudioWorkletNode(audioCtx, 'pcm-sender', { numberOfOutputs: 0 });
+    // Entrada mono explícita: el navegador mezcla L+R. Sin esto el worklet solo leía el canal izquierdo.
+    const node = new AudioWorkletNode(audioCtx, 'pcm-sender', { numberOfOutputs: 0, channelCount: 1, channelCountMode: 'explicit' });
     node.port.onmessage = (e) => {
       if (!paused && ws?.readyState === WebSocket.OPEN) ws.send(e.data);
     };
