@@ -9,23 +9,31 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const publicDir = join(root, 'public');
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 
-// Parámetros orientados a latencia mínima: PCM crudo, resultados parciales,
-// endpointing corto y sin formateo extra.
-const dgUrl = (language) =>
-  'wss://api.deepgram.com/v1/listen?' +
-  new URLSearchParams({
+// Términos clave (nova-3 keyterm prompting): texto separado por comas -> lista limpia, máx. 50.
+export const parseKeyterms = (v) =>
+  (Array.isArray(v) ? v : String(v ?? '').split(','))
+    .map((t) => String(t).trim())
+    .filter(Boolean)
+    .slice(0, 50);
+
+// PCM crudo con resultados parciales. El endpointing de 400 ms evita cortar las frases a mitad.
+export const dgUrl = (language, keyterms = []) => {
+  const params = new URLSearchParams({
     model: 'nova-3',
     language,
     encoding: 'linear16',
     sample_rate: '16000',
     channels: '1',
     interim_results: 'true',
-    endpointing: '200',
-    utterance_end_ms: '1000',
+    endpointing: '400',
+    utterance_end_ms: '1200',
     vad_events: 'true',
     punctuate: 'true',
-    smart_format: 'false',
+    smart_format: 'true',
   });
+  for (const k of parseKeyterms(keyterms)) params.append('keyterm', k);
+  return 'wss://api.deepgram.com/v1/listen?' + params;
+};
 
 const QUESTION_RE =
   /\?|^\s*(¿|qu[ée]|c[oó]mo|cu[aá]l(es)?|cu[aá]ndo|cu[aá]nto[sa]?|d[oó]nde|qui[eé]n(es)?|por\s?qu[eé]|para\s?qu[eé]|podr[ií]as?|puedes|explica|expl[ií]came|cu[eé]ntame|what|how|why|when|where|who|which|can you|could you|do you|does|is there|explain)\b/i;
@@ -47,6 +55,7 @@ export async function startServer({
   anthropicKey,
   language = 'es',
   model = 'claude-haiku-5-5',
+  keyterms = [],
   transcriptsDir,
   host = '127.0.0.1',
   port = 0,
@@ -166,7 +175,7 @@ export async function startServer({
       onMessage?.(obj);
     };
 
-    const dg = new WebSocket(dgUrl(language), { headers: { Authorization: `Token ${deepgramKey}` } });
+    const dg = new WebSocket(dgUrl(language, keyterms), { headers: { Authorization: `Token ${deepgramKey}` } });
     dg.on('open', () => {
       dgReady = true;
       for (const chunk of queue.splice(0)) dg.send(chunk);

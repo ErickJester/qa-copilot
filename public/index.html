@@ -147,6 +147,7 @@
       <select id="sLang"><option value="es">Español</option><option value="en">English</option><option value="multi">Multilingüe</option></select>
     </label>
     <label>Modelo <input type="text" id="sModel" autocomplete="off"></label>
+    <label>Términos clave (nombres del proyecto, siglas…) <input type="text" id="sKeyterms" autocomplete="off" placeholder="separados por comas"></label>
     <label>Carpeta de transcripciones
       <div class="row"><input type="text" id="sDir" readonly><button type="button" id="sPick">Cambiar…</button></div>
     </label>
@@ -257,6 +258,7 @@ async function initSettings() {
     $('sAn').placeholder = c.hasAnthropicKey ? 'Guardada: dejar vacío para no cambiar' : 'Pega tu clave';
     $('sLang').value = c.language;
     $('sModel').value = c.model;
+    $('sKeyterms').value = c.keyterms ?? '';
     $('sDir').value = c.transcriptsDir;
     showErr('');
     if (!dlg.open) dlg.showModal();
@@ -275,7 +277,7 @@ async function initSettings() {
       // Al guardar se reinicia el servidor y la ventana se recarga con el token nuevo.
       await window.desktop.saveConfig({
         deepgramKey: $('sDg').value, anthropicKey: $('sAn').value,
-        language: $('sLang').value, model: $('sModel').value, transcriptsDir: $('sDir').value,
+        language: $('sLang').value, model: $('sModel').value, keyterms: $('sKeyterms').value, transcriptsDir: $('sDir').value,
       });
     } catch (err) {
       showErr(err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''));

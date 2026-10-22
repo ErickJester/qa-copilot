@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { startServer } from '../src/server.js';
+import { parseKeyterms, startServer } from '../src/server.js';
 import { loadConfig, saveConfig } from './config.js';
 
 // Puerto fijo: el origen (y con él el localStorage con el contexto y los documentos) depende del puerto.
@@ -51,6 +51,7 @@ async function launchServer() {
     anthropicKey: cfg.anthropicKey,
     language: cfg.language,
     model: cfg.model,
+    keyterms: parseKeyterms(cfg.keyterms),
     transcriptsDir: cfg.transcriptsDir,
     token,
     // La flotante recibe la respuesta directamente del servidor, aunque la principal esté minimizada.
@@ -139,8 +140,8 @@ function setupIpc() {
   handle('float:toggle', toggleFloat);
 
   handle('config:get', () => {
-    const { language, model, transcriptsDir, deepgramKey, anthropicKey } = loadConfig();
-    return { language, model, transcriptsDir, hasDeepgramKey: !!deepgramKey, hasAnthropicKey: !!anthropicKey };
+    const { language, model, keyterms, transcriptsDir, deepgramKey, anthropicKey } = loadConfig();
+    return { language, model, keyterms, transcriptsDir, hasDeepgramKey: !!deepgramKey, hasAnthropicKey: !!anthropicKey };
   });
 
   handle('config:save', async (cfg) => {

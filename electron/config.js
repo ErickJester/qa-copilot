@@ -10,6 +10,7 @@ const file = () => join(app.getPath('userData'), 'config.json');
 const defaults = () => ({
   language: 'es',
   model: 'claude-haiku-5-5',
+  keyterms: '',
   transcriptsDir: join(app.getPath('documents'), 'Copiloto QA', 'transcripciones'),
 });
 
@@ -42,6 +43,7 @@ export function loadConfig() {
   return {
     language: saved.language || env.DG_LANGUAGE || d.language,
     model: saved.model || env.LLM_MODEL || d.model,
+    keyterms: saved.keyterms ?? env.DG_KEYTERMS ?? d.keyterms,
     transcriptsDir: saved.transcriptsDir || d.transcriptsDir,
     deepgramKey: decrypt(saved.deepgramKey) || env.DEEPGRAM_API_KEY || '',
     anthropicKey: decrypt(saved.anthropicKey) || env.ANTHROPIC_API_KEY || '',
@@ -62,6 +64,7 @@ export function saveConfig(partial = {}) {
   }
   if (['es', 'en', 'multi'].includes(partial.language)) saved.language = partial.language;
   if (typeof partial.model === 'string' && partial.model.trim()) saved.model = partial.model.trim();
+  if (typeof partial.keyterms === 'string') saved.keyterms = partial.keyterms.trim(); // vacío = sin términos
   if (typeof partial.transcriptsDir === 'string' && partial.transcriptsDir.trim()) saved.transcriptsDir = partial.transcriptsDir.trim();
   const bounds = validBounds(partial.floatBounds);
   if (bounds) saved.floatBounds = bounds;
