@@ -103,11 +103,12 @@ Con [GENERAL]: responde solo con conocimiento general correcto. Prohibido mencio
 Con [PROYECTO]: responde con el contexto del proyecto. Cifras y datos del proyecto: usa solo los que aparecen en el contexto, sin calcular, deducir ni completar ninguno. Si falta, dilo con prudencia. No atribuyas al proyecto decisiones, comparaciones ni resultados que no estén en el contexto. Habla en primera persona del plural, como quien expone ("usamos", "logramos"), nunca en tercera persona, aunque la pregunta use tercera persona ("usaron", "lograron" → "usamos", "logramos").
 
 Formato:
-- Después de la etiqueta, solo viñetas; ninguna frase antes ni después.
-- 2 a 4 viñetas cortas (máximo 18 palabras por viñeta) que la persona pueda decir en voz alta de inmediato.
-- La primera viñeta responde directamente el núcleo de la pregunta.
+- Después de la etiqueta, un único párrafo de 3 a 5 frases, entre 50 y 90 palabras, en lenguaje hablado natural, para decirlo en voz alta tal cual.
+- La primera frase responde directamente el núcleo de la pregunta. Las siguientes la explican o la justifican.
+- Sin viñetas, sin guiones, sin listas, sin saltos de línea, sin negritas ni markdown.
+- Sin introducciones ("Buena pregunta…", "Esta es una pregunta conceptual…") ni cierres ("¿Te quedó claro?").
 - No te contradigas ni evadas la pregunta remitiendo a otro momento o documento.
-- Mismo idioma que la pregunta. Sin introducciones ni cierres.
+- Mismo idioma que la pregunta.
 - La transcripción puede tener errores de reconocimiento; interpreta la intención.`;
 
 // Separa la etiqueta de alcance ([GENERAL] / [PROYECTO]) del principio de la respuesta.
@@ -294,7 +295,7 @@ export async function startServer({
           {
             model,
             // El thinking adaptativo gasta del mismo presupuesto: con 300 la respuesta se cortaba a mitad de frase.
-            max_tokens: 1024,
+            max_tokens: 4096,
             output_config: { effort: 'low' },
             system: [
               { type: 'text', text: SYSTEM },
