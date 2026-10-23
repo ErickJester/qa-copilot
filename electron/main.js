@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, screen, session, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, session, shell } from 'electron';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,6 @@ const DEFAULT_PORT = 47821;
 const root = fileURLToPath(new URL('..', import.meta.url));
 
 let win = null;
-let floatWin = null;
 let server = null;
 let origin = '';
 let token = '';
@@ -54,16 +53,10 @@ async function launchServer() {
     keyterms: parseKeyterms(cfg.keyterms),
     transcriptsDir: cfg.transcriptsDir,
     token,
-    // La flotante recibe la respuesta directamente del servidor, aunque la principal esté minimizada.
-    onMessage: (msg) => {
-      if (!RELAYED.has(msg.type) || !floatWin || floatWin.isDestroyed()) return;
-      floatWin.webContents.send('float:msg', msg);
-    },
   });
   origin = `http://127.0.0.1:${server.port}`;
 }
 
-const RELAYED = new Set(['answer_start', 'answer_delta', 'answer_end', 'answer_truncated', 'answer_scope', 'error']);
 const pageUrl = () => `${origin}/?t=${encodeURIComponent(token)}`;
 const isLocal = (url) => { try { return new URL(url).origin === origin; } catch { return false; } };
 
@@ -93,51 +86,20 @@ function lockNavigation(w) {
   });
 }
 
-// Los bounds guardados solo valen si la ventana queda dentro de alguna pantalla.
-function floatBoundsOrDefault() {
-  const b = loadConfig().floatBounds;
-  const fits = b && screen.getAllDisplays().some(({ bounds: d }) =>
-    b.x >= d.x && b.y >= d.y && b.x + b.width <= d.x + d.width && b.y + b.height <= d.y + d.height);
-  return fits ? b : { width: 460, height: 320 };
-}
-
-function toggleFloat() {
-  if (floatWin && !floatWin.isDestroyed()) {
-    if (floatWin.isVisible()) floatWin.hide();
-    else floatWin.showInactive();
-    return;
-  }
-  floatWin = new BrowserWindow({
-    ...floatBoundsOrDefault(),
-    title: 'Copiloto QA',
-    skipTaskbar: true,
-    resizable: true,
-    webPreferences: webPreferences(),
-  });
-  floatWin.setMenuBarVisibility(false);
-  floatWin.setAlwaysOnTop(true, 'screen-saver');
-  floatWin.setVisibleOnAllWorkspaces(true);
-  lockNavigation(floatWin);
-  let timer;
-  const saveBounds = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      if (floatWin && !floatWin.isDestroyed()) saveConfig({ floatBounds: floatWin.getBounds() });
-    }, 500);
-  };
-  floatWin.on('moved', saveBounds);
-  floatWin.on('resized', saveBounds);
-  floatWin.on('close', (e) => {
-    if (quitting) return;
-    e.preventDefault();
-    floatWin.hide();
-  });
-  floatWin.on('closed', () => { clearTimeout(timer); floatWin = null; });
-  floatWin.loadURL(`${origin}/float.html`);
+// Siempre encima: la propia ventana principal pasa a quedar sobre el resto (nivel 'screen-saver' para
+// superar apps a pantalla completa). No se guarda: la app arranca siempre normal.
+function toggleOnTop() {
+  if (!win || win.isDestroyed()) return false;
+  const on = !win.isAlwaysOnTop();
+  win.setAlwaysOnTop(on, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(on);
+  win.webContents.send('ontop:changed', on);
+  return on;
 }
 
 function setupIpc() {
-  handle('float:toggle', toggleFloat);
+  handle('ontop:toggle', toggleOnTop);
+  handle('ontop:get', () => !!win && !win.isDestroyed() && win.isAlwaysOnTop());
 
   handle('config:get', () => {
     const { language, model, keyterms, transcriptsDir, deepgramKey, anthropicKey } = loadConfig();
@@ -149,7 +111,6 @@ function setupIpc() {
     await server.close();
     await launchServer();
     await win.loadURL(pageUrl());
-    if (floatWin && !floatWin.isDestroyed()) floatWin.loadURL(`${origin}/float.html`);
   });
 
   handle('transcripts:pick', async () => {
@@ -189,14 +150,10 @@ async function main() {
     allowed.has(permission) && isLocal(requestingOrigin));
 
   win = new BrowserWindow({ width: 1100, height: 800, webPreferences: webPreferences() });
-  win.on('closed', () => {
-    win = null;
-    // Sin esto la flotante oculta mantendría la app viva (window-all-closed no se dispararía).
-    if (floatWin && !floatWin.isDestroyed()) floatWin.destroy();
-  });
+  win.on('closed', () => { win = null; });
   lockNavigation(win);
 
-  if (!globalShortcut.register('CommandOrControl+Shift+Space', toggleFloat)) {
+  if (!globalShortcut.register('CommandOrControl+Shift+Space', toggleOnTop)) {
     console.warn('No se pudo registrar el atajo Ctrl+Shift+Espacio (¿en uso por otra aplicación?)');
   }
 

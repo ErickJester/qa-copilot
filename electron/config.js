@@ -30,11 +30,6 @@ const decrypt = (b64) => {
   try { return safeStorage.decryptString(Buffer.from(b64, 'base64')); } catch { return ''; }
 };
 
-const validBounds = (b) =>
-  b && ['x', 'y', 'width', 'height'].every((k) => Number.isFinite(b[k])) && b.width > 0 && b.height > 0
-    ? { x: b.x, y: b.y, width: b.width, height: b.height }
-    : null;
-
 // Devuelve la config con las claves en claro: solo para uso interno del proceso principal.
 export function loadConfig() {
   const saved = readJson();
@@ -47,7 +42,6 @@ export function loadConfig() {
     transcriptsDir: saved.transcriptsDir || d.transcriptsDir,
     deepgramKey: decrypt(saved.deepgramKey) || env.DEEPGRAM_API_KEY || '',
     anthropicKey: decrypt(saved.anthropicKey) || env.ANTHROPIC_API_KEY || '',
-    floatBounds: validBounds(saved.floatBounds),
   };
 }
 
@@ -66,8 +60,6 @@ export function saveConfig(partial = {}) {
   if (typeof partial.model === 'string' && partial.model.trim()) saved.model = partial.model.trim();
   if (typeof partial.keyterms === 'string') saved.keyterms = partial.keyterms.trim(); // vacío = sin términos
   if (typeof partial.transcriptsDir === 'string' && partial.transcriptsDir.trim()) saved.transcriptsDir = partial.transcriptsDir.trim();
-  const bounds = validBounds(partial.floatBounds);
-  if (bounds) saved.floatBounds = bounds;
   mkdirSync(dirname(file()), { recursive: true });
   writeFileSync(file(), JSON.stringify(saved, null, 2), 'utf8');
 }

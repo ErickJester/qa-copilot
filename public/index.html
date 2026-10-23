@@ -29,6 +29,7 @@
   button:hover:not(:disabled) { background: var(--surface); border-color: var(--muted); }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
   button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
   button:disabled { opacity: .45; cursor: default; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   dialog { border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--fg); padding: var(--space); width: min(480px, calc(100vw - 32px)); }
@@ -88,7 +89,8 @@
     <button id="start" class="primary">Compartir pestaña y empezar</button>
     <button id="pause" disabled>Pausar</button>
     <button id="stop" disabled>Detener</button>
-    <button id="float">Ventana flotante</button>
+    <button id="onTop" aria-pressed="false" hidden>Siempre encima</button>
+    <button id="ai" aria-pressed="true" title="Detecta preguntas y responde solas; apagada, solo transcribe">IA</button>
     <label class="check"><input type="checkbox" id="mic"> Incluir mi micrófono</label>
     <select id="micDev" aria-label="Micrófono"></select>
     <button id="refreshDev" hidden>Actualizar dispositivos</button>
@@ -164,32 +166,23 @@
   </form>
 </dialog>
 <script>
-// Se guardan los nodos al cargar: al mover el panel a la ventana flotante, getElementById deja de encontrarlos.
 const nodes = {};
 document.querySelectorAll('[id]').forEach((el) => (nodes[el.id] = el));
 const $ = (id) => nodes[id];
 const ctx = $('ctx');
 
-// Ventana flotante siempre encima (Document Picture-in-Picture: Chrome/Edge 116+).
-const floatBtn = $('float');
-// En escritorio la flotante es una ventana propia (ver electron/main.js); en web sigue el Document PiP.
-if (!window.desktop?.float && !('documentPictureInPicture' in window)) floatBtn.hidden = true;
-floatBtn.onclick = async () => {
-  if (window.desktop?.float) return window.desktop.float.toggle();
-  if (documentPictureInPicture.window) return documentPictureInPicture.window.close();
-  const pip = await documentPictureInPicture.requestWindow({ width: 460, height: 320 });
-  document.querySelectorAll('style').forEach((s) => pip.document.head.appendChild(s.cloneNode(true)));
-  pip.document.body.style.cssText = 'margin:0;padding:12px;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif';
-  const panel = $('answerPanel'), home = panel.parentNode, next = panel.nextSibling;
-  panel.style.cssText = 'border:0;padding:0;min-height:0';
-  pip.document.body.append(panel);
-  floatBtn.textContent = 'Cerrar ventana flotante';
-  pip.addEventListener('pagehide', () => {
-    panel.removeAttribute('style');
-    home.insertBefore(panel, next);
-    floatBtn.textContent = 'Ventana flotante';
-  });
-};
+// Siempre encima: solo en escritorio (el botón sigue el estado real de la ventana, también el del atajo).
+const onTopBtn = $('onTop');
+if (window.desktop?.onTop) {
+  const show = (on) => {
+    onTopBtn.setAttribute('aria-pressed', String(!!on));
+    onTopBtn.textContent = on ? 'Quitar siempre encima' : 'Siempre encima';
+  };
+  onTopBtn.hidden = false;
+  onTopBtn.onclick = () => window.desktop.onTop.toggle().then(show).catch((e) => setStatus('Error: ' + e.message));
+  window.desktop.onTop.onChange(show);
+  window.desktop.onTop.get().then(show).catch(() => {});
+}
 let docs = [];
 try {
   ctx.value = localStorage.getItem('ctx') ?? '';
@@ -225,6 +218,10 @@ function renderDocs() {
 
 function pushContext() {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'context', text: buildContext() }));
+}
+
+function pushAi() {
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ai', enabled: aiOn }));
 }
 
 function saveDocs() {
@@ -306,7 +303,7 @@ function connect() {
   return new Promise((resolve, reject) => {
     ws = new WebSocket(`ws://${location.host}/ws${authToken ? `?t=${encodeURIComponent(authToken)}` : ''}`);
     ws.binaryType = 'arraybuffer';
-    ws.onopen = () => { pushContext(); resolve(); };
+    ws.onopen = () => { pushContext(); pushAi(); resolve(); };
     ws.onerror = reject;
     ws.onclose = () => { if (!$('status').textContent.startsWith('Error')) setStatus('Desconectado'); };
     ws.onmessage = (e) => handle(JSON.parse(e.data));
@@ -330,19 +327,23 @@ function handle(m) {
     }
     box.scrollTop = box.scrollHeight;
   } else if (m.type === 'answer_start') {
+    answering = true;
     $('question').textContent = m.question;
     $('scope').hidden = true;
     $('answer').textContent = '';
     $('answer').classList.remove('empty');
   } else if (m.type === 'answer_delta') {
-    $('answer').textContent += m.text;
+    if (answering) $('answer').textContent += m.text;
+  } else if (m.type === 'answer_end') {
+    answering = false;
   } else if (m.type === 'answer_scope') {
+    if (!answering) return;
     const sc = $('scope');
     sc.textContent = m.scope === 'proyecto' ? 'Sobre tu proyecto' : 'General';
     sc.className = 'scope ' + m.scope;
     sc.hidden = false;
   } else if (m.type === 'answer_truncated') {
-    $('answer').textContent += ' …';
+    if (answering) $('answer').textContent += ' …';
   } else if (m.type === 'status') {
     setStatus(m.text, $('dot').dataset.state);
   } else if (m.type === 'error') {
@@ -356,6 +357,34 @@ const store = {
   get: (k) => { try { return localStorage.getItem(k) ?? ''; } catch { return ''; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
 };
+
+// Interruptor de la IA (por defecto activada). Apagada, el servidor solo transcribe; las preguntas explícitas siguen respondiendo.
+const AI_OFF = 'IA desactivada: solo transcripción';
+let aiOn = store.get('ai') !== '0';
+let answering = false; // hay una respuesta en curso
+const answerEl = $('answer');
+function showAiOff() {
+  $('question').textContent = '';
+  $('scope').hidden = true;
+  answerEl.textContent = AI_OFF;
+  answerEl.classList.add('empty');
+}
+function renderAi() {
+  $('ai').setAttribute('aria-pressed', String(aiOn));
+  if (!aiOn) {
+    // Un contenido ya terminado se conserva; una respuesta en curso (el servidor la corta) o el aviso vacío se sustituyen.
+    if (answering || answerEl.classList.contains('empty')) { answering = false; showAiOff(); }
+  } else if (answerEl.textContent === AI_OFF) {
+    answerEl.textContent = 'Esperando una pregunta.';
+  }
+}
+$('ai').onclick = () => {
+  aiOn = !aiOn;
+  store.set('ai', aiOn ? '1' : '0');
+  renderAi();
+  pushAi();
+};
+renderAi();
 
 function updateStartLabel() {
   $('start').textContent = $('src').value !== 'display' ? 'Empezar a escuchar' : isDesktop ? 'Escuchar audio del sistema' : 'Compartir pestaña y empezar';

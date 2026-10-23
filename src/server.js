@@ -247,7 +247,6 @@ export async function generateAnswer({ anthropic, model, context, recent, questi
 // Arranca el servidor HTTP/WS. Toda la configuración entra por `opts`; el módulo no lee process.env.
 // Sin claves arranca igual (para poder mostrar Ajustes): /ws avisa y cierra, /transcribe responde 400.
 // Si se pasa `token`, /ws y /transcribe lo exigen en `?t=`.
-// `onMessage` (opcional) recibe cada mensaje que el servidor envía al cliente (answer_*, transcript...).
 export async function startServer({
   deepgramKey,
   anthropicKey,
@@ -258,7 +257,6 @@ export async function startServer({
   host = '127.0.0.1',
   port = 0,
   token,
-  onMessage,
 }) {
   const hasKeys = !!(deepgramKey && anthropicKey);
   const NO_KEYS = 'Faltan las claves de API: ábrelas en Ajustes';
@@ -366,12 +364,12 @@ export async function startServer({
     let pending = ''; // segmentos finales de la intervención en curso
     let abort = null;
     let classifier = null; // AbortController del clasificador pendiente
+    let aiEnabled = true; // con la IA desactivada solo se transcribe: las preguntas explícitas siguen funcionando
     let dgReady = false;
     const queue = [];
 
     const send = (obj) => {
       if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(obj));
-      onMessage?.(obj);
     };
 
     const dg = new WebSocket(dgUrl(language, keyterms), { headers: { Authorization: `Token ${deepgramKey}` } });
@@ -420,6 +418,7 @@ export async function startServer({
       history.push(text);
       if (history.length > 20) history.shift();
       classifier?.abort(); // una intervención nueva anula el clasificador pendiente
+      if (!aiEnabled) return;
       if (QUESTION_RE.test(text)) return answer(text);
       if (text.split(/\s+/).length < 4) return;
       const controller = (classifier = new AbortController());
@@ -458,6 +457,13 @@ export async function startServer({
       }
       const msg = JSON.parse(data);
       if (msg.type === 'context') context = msg.text;
+      else if (msg.type === 'ai') {
+        aiEnabled = !!msg.enabled;
+        if (!aiEnabled) {
+          abort?.abort();
+          classifier?.abort();
+        }
+      }
       else if (msg.type === 'ask') {
         history.push(msg.text);
         answer(msg.text);
