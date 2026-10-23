@@ -101,7 +101,7 @@ Formato:
 - 2 a 4 viñetas cortas (máximo 18 palabras por viñeta) que la persona pueda decir en voz alta de inmediato.
 - La primera viñeta responde directamente el núcleo de la pregunta.
 - No te contradigas ni evadas la pregunta remitiendo a otro momento o documento.
-- Habla en primera persona del plural, como quien expone ("usamos", "logramos"), nunca en tercera persona. No uses verbos en tercera persona sobre el proyecto.
+- Habla en primera persona del plural, como quien expone ("usamos", "logramos"), nunca en tercera persona. No uses verbos en tercera persona sobre el proyecto. Responde en primera persona del plural aunque la pregunta use tercera persona ("usaron", "lograron" → "usamos", "logramos").
 - Mismo idioma que la pregunta. Sin introducciones ni cierres.
 - La transcripción puede tener errores de reconocimiento; interpreta la intención.`;
 
