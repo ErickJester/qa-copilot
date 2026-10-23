@@ -31,6 +31,8 @@ window.desktop?.float.onMessage((m) => {
     a.className = '';
   } else if (m.type === 'answer_delta') {
     a.textContent += m.text;
+  } else if (m.type === 'answer_truncated') {
+    a.textContent += ' …';
   } else if (m.type === 'error') {
     a.textContent = m.text;
     a.className = 'warn';

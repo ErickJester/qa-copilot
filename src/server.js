@@ -77,7 +77,10 @@ export async function classifyQuestion(anthropic, model, previous, text, signal)
   const res = await anthropic.messages.create(
     {
       model,
-      max_tokens: 3, // este modelo no admite `temperature`
+      // Los tokens de thinking cuentan para max_tokens: con un tope bajo el modelo podría gastarlo pensando y devolver texto vacío.
+      // Este modelo no admite `temperature`.
+      max_tokens: 256,
+      output_config: { effort: 'low' },
       system: CLASSIFIER_SYSTEM,
       messages: [{ role: 'user', content: `Intervención anterior: ${previous || '(ninguna)'}\nIntervención actual: ${text}` }],
     },
@@ -242,7 +245,9 @@ export async function startServer({
         const stream = anthropic.messages.stream(
           {
             model,
-            max_tokens: 300,
+            // El thinking adaptativo gasta del mismo presupuesto: con 300 la respuesta se cortaba a mitad de frase.
+            max_tokens: 1024,
+            output_config: { effort: 'low' },
             system: [
               { type: 'text', text: SYSTEM },
               { type: 'text', text: `CONTEXTO DEL PROYECTO:\n${context || '(sin contexto cargado)'}`, cache_control: { type: 'ephemeral' } },
@@ -252,7 +257,14 @@ export async function startServer({
           { signal: controller.signal },
         );
         stream.on('text', (t) => send({ type: 'answer_delta', text: t }));
-        await stream.finalMessage();
+        const final = await stream.finalMessage();
+        if (final.stop_reason === 'max_tokens') {
+          console.warn('Respuesta truncada por max_tokens', final.usage?.output_tokens);
+          send({ type: 'answer_truncated' });
+        } else if (final.stop_reason === 'refusal') {
+          send({ type: 'error', text: 'El modelo no quiso responder a esta pregunta' });
+          return;
+        }
         send({ type: 'answer_end' });
       } catch (err) {
         if (controller.signal.aborted) return;

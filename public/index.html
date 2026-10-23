@@ -332,6 +332,8 @@ function handle(m) {
     $('answer').classList.remove('empty');
   } else if (m.type === 'answer_delta') {
     $('answer').textContent += m.text;
+  } else if (m.type === 'answer_truncated') {
+    $('answer').textContent += ' …';
   } else if (m.type === 'status') {
     setStatus(m.text, $('dot').dataset.state);
   } else if (m.type === 'error') {

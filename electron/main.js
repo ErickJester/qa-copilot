@@ -63,7 +63,7 @@ async function launchServer() {
   origin = `http://127.0.0.1:${server.port}`;
 }
 
-const RELAYED = new Set(['answer_start', 'answer_delta', 'answer_end', 'error']);
+const RELAYED = new Set(['answer_start', 'answer_delta', 'answer_end', 'answer_truncated', 'error']);
 const pageUrl = () => `${origin}/?t=${encodeURIComponent(token)}`;
 const isLocal = (url) => { try { return new URL(url).origin === origin; } catch { return false; } };
 
