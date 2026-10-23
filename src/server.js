@@ -69,82 +69,175 @@ export const QUESTION_RE = new RegExp(
   'iu',
 );
 
+// thinking desactivado cuando el modelo lo admite: ahorra segundos de espera. Los modelos que lo rechazan
+// (400 por el parámetro thinking) se recuerdan mientras viva el proceso y se reintenta sin él una vez.
+const noThinking = new Map(); // modelo -> false si rechazó `thinking: disabled`
+export async function withNoThinking(model, run) {
+  if (noThinking.get(model) === false) return run({});
+  try {
+    return await run({ thinking: { type: 'disabled' } });
+  } catch (err) {
+    if (err.status !== 400 || !/thinking/i.test(err.message)) throw err;
+    noThinking.set(model, false);
+    return run({});
+  }
+}
+
 // Clasificador de respaldo (mismo modelo) para preguntas sin "?" ni fórmula conocida.
 const CLASSIFIER_SYSTEM =
   'Clasificas fragmentos transcritos de una videollamada. Responde solo SI si el fragmento es una pregunta o una petición (directa o indirecta) que espera respuesta de quien expone; si no, NO.';
 
 export async function classifyQuestion(anthropic, model, previous, text, signal) {
-  const res = await anthropic.messages.create(
-    {
-      model,
-      // Los tokens de thinking cuentan para max_tokens: con un tope bajo el modelo podría gastarlo pensando y devolver texto vacío.
-      // Este modelo no admite `temperature`.
-      max_tokens: 256,
-      output_config: { effort: 'low' },
-      system: CLASSIFIER_SYSTEM,
-      messages: [{ role: 'user', content: `Intervención anterior: ${previous || '(ninguna)'}\nIntervención actual: ${text}` }],
-    },
-    { signal },
+  const res = await withNoThinking(model, (extra) =>
+    anthropic.messages.create(
+      {
+        model,
+        // Si el modelo no admite desactivar el thinking, sus tokens cuentan para max_tokens: de ahí el margen.
+        // Este modelo no admite `temperature`.
+        max_tokens: 256,
+        output_config: { effort: 'low' },
+        ...extra,
+        system: CLASSIFIER_SYSTEM,
+        messages: [{ role: 'user', content: `Intervención anterior: ${previous || '(ninguna)'}\nIntervención actual: ${text}` }],
+      },
+      { signal },
+    ),
   );
   const out = (res.content.find((b) => b.type === 'text')?.text ?? '').trim().normalize('NFD').replace(/\p{M}/gu, '');
   return /^SI\b/i.test(out);
 }
 
-export const SYSTEM = `Eres un asistente que ayuda a una persona a responder en vivo las preguntas que le hacen mientras expone su proyecto.
-Recibirás el contexto del proyecto, la conversación reciente y la última pregunta detectada.
+// Paso previo y rápido: ¿la pregunta es general o sobre el proyecto? Ante duda o error, 'general'.
+const SCOPE_SYSTEM = `Decides si la última pregunta de una videollamada trata sobre el proyecto de quien expone o es una pregunta general.
+Recibirás el contexto del proyecto, la conversación reciente y la pregunta.
+- PROYECTO: la pregunta menciona el proyecto, sistema, modelo, datos o resultados propios ("tu sistema", "lograron", "usaron", "su dataset"…), va dirigida a quien expone ("ustedes", "hicieron", "por qué eligieron…"), o es un seguimiento de algo que la conversación reciente ya estaba tratando sobre el proyecto.
+- GENERAL: la pregunta es sobre un concepto o técnica, sin referencia al proyecto, y la conversación reciente no estaba hablando del proyecto en ese punto. La existencia del contexto del proyecto NO cuenta como señal: siempre está ahí.
+- En caso de duda, GENERAL.
+Responde con una sola palabra: GENERAL o PROYECTO.`;
 
-Primero identifica qué se pregunta realmente. Usa la conversación reciente para resolver referencias como "eso", "entonces" o "esos números".
-Empieza SIEMPRE la respuesta con una primera línea que contenga solo la etiqueta [GENERAL] o [PROYECTO], y después las viñetas.
-- [PROYECTO]: la pregunta menciona el proyecto, sistema, modelo, datos o resultados propios ("tu sistema", "lograron", "usaron", "su dataset"…), o es un seguimiento de algo que la conversación reciente ya estaba tratando sobre el proyecto.
-- [GENERAL]: la pregunta es sobre un concepto o técnica, sin referencia al proyecto, y la conversación reciente no estaba hablando del proyecto en ese punto. La existencia del contexto del proyecto NO cuenta como señal: siempre está ahí.
-- Si la pregunta va dirigida a quien expone ("ustedes", "usaron", "lograron", "hicieron", "tu sistema", "su modelo", "por qué eligieron…"), es siempre [PROYECTO]. Si el párrafo habla de lo que hicimos, usamos o logramos, la etiqueta tiene que ser [PROYECTO].
-- En caso de duda, [GENERAL].
+export async function classifyScope(anthropic, model, context, recent, question, signal) {
+  const res = await withNoThinking(model, (extra) =>
+    anthropic.messages.create(
+      {
+        model,
+        max_tokens: extra.thinking ? 16 : 256, // sin la opción de desactivar el thinking, sus tokens cuentan
+        output_config: { effort: 'low' },
+        ...extra,
+        system: [
+          { type: 'text', text: SCOPE_SYSTEM },
+          { type: 'text', text: `CONTEXTO DEL PROYECTO:\n${context || '(sin contexto cargado)'}`, cache_control: { type: 'ephemeral' } },
+        ],
+        messages: [{ role: 'user', content: `Conversación reciente:\n${recent}\n\nPregunta:\n${question}` }],
+      },
+      { signal },
+    ),
+  );
+  const out = res.content.find((b) => b.type === 'text')?.text ?? '';
+  return /^\s*PROYECTO/i.test(out) ? 'proyecto' : 'general';
+}
 
-Con [GENERAL]: responde solo con conocimiento general correcto. Prohibido mencionar el proyecto, sus datos o la palabra "nuestro" referida a él.
-Con [PROYECTO]: responde con el contexto del proyecto. Cifras y datos del proyecto: usa solo los que aparecen en el contexto, sin calcular, deducir ni completar ninguno. Si falta, dilo con prudencia. Usa solo lo que dice el contexto, sin deducir limitaciones, motivos ni condiciones que no estén escritos. No atribuyas al proyecto decisiones, comparaciones ni resultados que no estén en el contexto. Habla en primera persona del plural, como quien expone ("usamos", "logramos"), nunca en tercera persona, aunque la pregunta use tercera persona ("usaron", "lograron" → "usamos", "logramos").
+const FORMAT = `Formato: un único párrafo de 3 a 5 frases, entre 50 y 80 palabras, en lenguaje hablado natural para decirlo en voz alta tal cual. La primera frase responde directamente el núcleo de la pregunta; las siguientes la explican o la justifican. Sin viñetas, guiones, listas, saltos de línea, negritas ni markdown. Sin introducciones ("Buena pregunta…") ni cierres ("¿Te quedó claro?"). Mismo idioma que la pregunta. La transcripción puede tener errores de reconocimiento; interpreta la intención.`;
 
-Formato:
-- Después de la etiqueta, un único párrafo de 3 a 5 frases, entre 50 y 80 palabras, en lenguaje hablado natural, para decirlo en voz alta tal cual.
-- La primera frase responde directamente el núcleo de la pregunta. Las siguientes la explican o la justifican.
-- Sin viñetas, sin guiones, sin listas, sin saltos de línea, sin negritas ni markdown.
-- Sin introducciones ("Buena pregunta…", "Esta es una pregunta conceptual…") ni cierres ("¿Te quedó claro?").
-- No te contradigas ni evadas la pregunta remitiendo a otro momento o documento.
-- Mismo idioma que la pregunta.
-- La transcripción puede tener errores de reconocimiento; interpreta la intención.`;
+// Pregunta general: no recibe el contexto del proyecto, así que no puede mencionarlo.
+export const SYSTEM_GENERAL = `Eres un asistente que ayuda a una persona a responder en vivo una pregunta general o conceptual que le hacen mientras expone. Usa la conversación reciente solo para resolver referencias como "eso" o "entonces".
+Explica el concepto con conocimiento general correcto. No hables de ningún proyecto, sistema ni datos propios, y no uses la palabra "nuestro". Aunque la conversación reciente mencione cifras, resultados o datos del proyecto, no los repitas ni los uses como ejemplo.
 
-// Separa la etiqueta de alcance ([GENERAL] / [PROYECTO]) del principio de la respuesta.
-// Retiene el texto solo mientras pueda ser una etiqueta; si no lo es, lo reenvía íntegro y sin scope.
-export function createScopeFilter(emit) {
-  const LABEL = /^\s*\[(GENERAL|PROYECTO)\]\s*/i;
-  let buf = '';
-  let done = false;
-  const release = () => {
-    done = true;
-    if (buf) emit({ type: 'answer_delta', text: buf });
-    buf = '';
+${FORMAT}`;
+
+export const SYSTEM_PROYECTO = `Eres un asistente que ayuda a una persona a responder en vivo las preguntas que le hacen mientras expone su proyecto.
+Recibirás el contexto del proyecto, la conversación reciente y la última pregunta detectada. Usa la conversación reciente para resolver referencias como "eso", "entonces" o "esos números".
+Responde con el contexto del proyecto. Cifras y datos del proyecto: usa solo los que aparecen en el contexto, sin calcular, deducir ni completar ninguno. Si falta, dilo con naturalidad y prudencia, como lo diría quien expone ("eso todavía no lo hemos definido"), sin mencionar "el contexto" ni el material que recibes. Usa solo lo que dice el contexto, sin deducir limitaciones, motivos ni condiciones que no estén escritos. No atribuyas al proyecto decisiones, comparaciones ni resultados que no estén en el contexto.
+Habla en primera persona del plural, como quien expone ("usamos", "logramos"), nunca en tercera persona, aunque la pregunta use tercera persona ("usaron", "lograron" → "usamos", "logramos").
+
+${FORMAT}`;
+
+// Garantiza el párrafo único aunque el modelo se salte la regla: saltos de línea -> espacio y sin marcadores de lista
+// al inicio de línea. Trabaja sobre deltas en streaming: retiene el comienzo de línea mientras pueda ser un marcador.
+export function createParagraphFilter(emit) {
+  const MARKER = /^\s*(?:[-*•]|\d{1,2}[.)])\s/;
+  const MAYBE_MARKER = /^\s*(?:[-*•]|\d{1,2}[.)]?)?$/;
+  let head = '';
+  let atLineStart = true;
+  let spaced = true; // nada emitido aún, o el último carácter fue un espacio
+  const run = (text, final) => {
+    let out = '';
+    const put = (s) => {
+      if (!s) return;
+      out += s;
+      spaced = /\s$/.test(s);
+    };
+    for (const ch of text) {
+      if (ch === '\n' || ch === '\r') {
+        put(head);
+        head = '';
+        if (!spaced) put(' ');
+        atLineStart = true;
+      } else if (!atLineStart) {
+        put(ch);
+      } else {
+        head += ch;
+        if (MARKER.test(head)) {
+          head = '';
+          atLineStart = false;
+        } else if (!MAYBE_MARKER.test(head)) {
+          put(head);
+          head = '';
+          atLineStart = false;
+        }
+      }
+    }
+    if (final) {
+      put(head);
+      head = '';
+    }
+    if (out) emit(out);
   };
-  const resolve = () => {
-    const m = LABEL.exec(buf);
-    if (!m) return release();
-    done = true;
-    emit({ type: 'answer_scope', scope: m[1].toLowerCase() });
-    const rest = buf.slice(m[0].length);
-    buf = '';
-    if (rest) emit({ type: 'answer_delta', text: rest });
-  };
-  return {
-    push(t) {
-      if (done) return emit({ type: 'answer_delta', text: t });
-      buf += t;
-      const head = buf.trimStart();
-      if (!head) return;
-      if (head[0] !== '[') return release();
-      if (/\]\s*\S/.test(head) || head.length > 16) resolve(); // etiqueta completa y ya hay texto detrás, o demasiado larga
-    },
-    end() {
-      if (!done) resolve();
-    },
-  };
+  return { push: (t) => run(t, false), end: () => run('', true) };
+}
+
+// Una respuesta completa: primero el alcance (general / proyecto), después el párrafo en streaming.
+// `send` recibe answer_scope y answer_delta; el llamador decide el resto. Devuelve el mensaje final.
+export async function generateAnswer({ anthropic, model, context, recent, question, send, signal }) {
+  let scope = 'general';
+  try {
+    scope = await classifyScope(anthropic, model, context, recent, question, signal);
+  } catch (err) {
+    if (signal?.aborted) return null;
+    console.error('alcance de la pregunta', err.message);
+  }
+  if (signal?.aborted) return null;
+  send({ type: 'answer_scope', scope });
+  const system =
+    scope === 'proyecto'
+      ? [
+          { type: 'text', text: SYSTEM_PROYECTO },
+          { type: 'text', text: `CONTEXTO DEL PROYECTO:\n${context || '(sin contexto cargado)'}`, cache_control: { type: 'ephemeral' } },
+        ]
+      : SYSTEM_GENERAL;
+  const filter = createParagraphFilter((text) => send({ type: 'answer_delta', text }));
+  const final = await withNoThinking(model, (extra) => {
+    const stream = anthropic.messages.stream(
+      {
+        model,
+        // Si el modelo no admite desactivar el thinking, sus tokens cuentan para max_tokens.
+        max_tokens: 4096,
+        output_config: { effort: 'low' },
+        ...extra,
+        system,
+        messages: [
+          {
+            role: 'user',
+            content: `Conversación reciente:\n${recent}\n\nPregunta a responder:\n${question}\n\nRecuerda: un solo párrafo hablado de 50 a 80 palabras, sin viñetas ni saltos de línea.`,
+          },
+        ],
+      },
+      { signal },
+    );
+    stream.on('text', (t) => filter.push(t));
+    return stream.finalMessage();
+  });
+  filter.end();
+  return final;
 }
 
 // Arranca el servidor HTTP/WS. Toda la configuración entra por `opts`; el módulo no lee process.env.
@@ -289,26 +382,17 @@ export async function startServer({
       abort?.abort();
       const controller = (abort = new AbortController());
       send({ type: 'answer_start', question });
-      const scope = createScopeFilter(send);
-      const recent = history.slice(-10).join('\n');
       try {
-        const stream = anthropic.messages.stream(
-          {
-            model,
-            // El thinking adaptativo gasta del mismo presupuesto: con 300 la respuesta se cortaba a mitad de frase.
-            max_tokens: 4096,
-            output_config: { effort: 'low' },
-            system: [
-              { type: 'text', text: SYSTEM },
-              { type: 'text', text: `CONTEXTO DEL PROYECTO:\n${context || '(sin contexto cargado)'}`, cache_control: { type: 'ephemeral' } },
-            ],
-            messages: [{ role: 'user', content: `Conversación reciente:\n${recent}\n\nPregunta a responder:\n${question}` }],
-          },
-          { signal: controller.signal },
-        );
-        stream.on('text', (t) => scope.push(t));
-        const final = await stream.finalMessage();
-        scope.end();
+        const final = await generateAnswer({
+          anthropic,
+          model,
+          context,
+          recent: history.slice(-10).join('\n'),
+          question,
+          send,
+          signal: controller.signal,
+        });
+        if (!final || controller.signal.aborted) return;
         if (final.stop_reason === 'max_tokens') {
           console.warn('Respuesta truncada por max_tokens', final.usage?.output_tokens);
           send({ type: 'answer_truncated' });
