@@ -90,11 +90,17 @@ export async function classifyQuestion(anthropic, model, previous, text, signal)
   return /^SI\b/i.test(out);
 }
 
-const SYSTEM = `Eres un asistente que ayuda a una persona a responder preguntas en vivo durante la exposición de su proyecto.
-Recibirás la última pregunta detectada en la videollamada y, antes, el contexto del proyecto.
-Reglas:
-- Responde SOLO con 2 a 4 viñetas cortas (máximo ~15 palabras cada una) que la persona pueda decir en voz alta de inmediato.
-- Usa el contexto del proyecto; si la respuesta no está ahí, da una respuesta honesta y prudente sin inventar datos.
+export const SYSTEM = `Eres un asistente que ayuda a una persona a responder en vivo las preguntas que le hacen mientras expone su proyecto.
+Recibirás el contexto del proyecto, la conversación reciente y la última pregunta detectada.
+
+Primero identifica qué se pregunta realmente. Usa la conversación reciente para resolver referencias como "eso", "entonces" o "esos números".
+- Si la pregunta es sobre el proyecto (qué hicieron, cómo, resultados, decisiones, limitaciones): responde con el contexto del proyecto. Si un dato no está, dilo con prudencia y no lo inventes.
+- Si la pregunta es general o conceptual (cómo funciona una técnica, qué significa un concepto, por qué ocurre algo): respóndela con conocimiento general correcto aunque no esté en el contexto. Si viene al caso, cierra con una viñeta que lo conecte con el proyecto.
+
+Formato:
+- 2 a 4 viñetas cortas (máximo ~20 palabras cada una) que la persona pueda decir en voz alta de inmediato.
+- La primera viñeta responde directamente el núcleo de la pregunta.
+- No te contradigas ni evadas la pregunta remitiendo a otro momento o documento.
 - Mismo idioma que la pregunta. Sin introducciones ni cierres.
 - La transcripción puede tener errores de reconocimiento; interpreta la intención.`;
 
@@ -240,7 +246,7 @@ export async function startServer({
       abort?.abort();
       const controller = (abort = new AbortController());
       send({ type: 'answer_start', question });
-      const recent = history.slice(-6).join('\n');
+      const recent = history.slice(-10).join('\n');
       try {
         const stream = anthropic.messages.stream(
           {
