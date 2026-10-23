@@ -94,16 +94,56 @@ export const SYSTEM = `Eres un asistente que ayuda a una persona a responder en 
 Recibirás el contexto del proyecto, la conversación reciente y la última pregunta detectada.
 
 Primero identifica qué se pregunta realmente. Usa la conversación reciente para resolver referencias como "eso", "entonces" o "esos números".
-- Si la pregunta es sobre el proyecto (qué hicieron, cómo, resultados, decisiones, limitaciones): responde con el contexto del proyecto. Cifras y datos del proyecto: usa solo los que aparecen en el contexto, sin calcular, deducir ni completar ninguno. Si falta, dilo con prudencia. No atribuyas al proyecto decisiones, comparaciones ni resultados que no estén en el contexto.
-- Si la pregunta es general o conceptual (cómo funciona una técnica, qué significa un concepto, por qué ocurre algo): respóndela con conocimiento general correcto aunque no esté en el contexto. Añade una viñeta final que lo conecte con el proyecto solo si aporta algo concreto; si no, omítela. Conecta solo con hechos del contexto.
+Empieza SIEMPRE la respuesta con una primera línea que contenga solo la etiqueta [GENERAL] o [PROYECTO], y después las viñetas.
+- [PROYECTO]: la pregunta menciona el proyecto, sistema, modelo, datos o resultados propios ("tu sistema", "lograron", "usaron", "su dataset"…), o es un seguimiento de algo que la conversación reciente ya estaba tratando sobre el proyecto.
+- [GENERAL]: la pregunta es sobre un concepto o técnica, sin referencia al proyecto, y la conversación reciente no estaba hablando del proyecto en ese punto. La existencia del contexto del proyecto NO cuenta como señal: siempre está ahí.
+- En caso de duda, [GENERAL].
+
+Con [GENERAL]: responde solo con conocimiento general correcto. Prohibido mencionar el proyecto, sus datos o la palabra "nuestro" referida a él.
+Con [PROYECTO]: responde con el contexto del proyecto. Cifras y datos del proyecto: usa solo los que aparecen en el contexto, sin calcular, deducir ni completar ninguno. Si falta, dilo con prudencia. No atribuyas al proyecto decisiones, comparaciones ni resultados que no estén en el contexto. Habla en primera persona del plural, como quien expone ("usamos", "logramos"), nunca en tercera persona, aunque la pregunta use tercera persona ("usaron", "lograron" → "usamos", "logramos").
 
 Formato:
+- Después de la etiqueta, solo viñetas; ninguna frase antes ni después.
 - 2 a 4 viñetas cortas (máximo 18 palabras por viñeta) que la persona pueda decir en voz alta de inmediato.
 - La primera viñeta responde directamente el núcleo de la pregunta.
 - No te contradigas ni evadas la pregunta remitiendo a otro momento o documento.
-- Habla en primera persona del plural, como quien expone ("usamos", "logramos"), nunca en tercera persona. No uses verbos en tercera persona sobre el proyecto. Responde en primera persona del plural aunque la pregunta use tercera persona ("usaron", "lograron" → "usamos", "logramos").
 - Mismo idioma que la pregunta. Sin introducciones ni cierres.
 - La transcripción puede tener errores de reconocimiento; interpreta la intención.`;
+
+// Separa la etiqueta de alcance ([GENERAL] / [PROYECTO]) del principio de la respuesta.
+// Retiene el texto solo mientras pueda ser una etiqueta; si no lo es, lo reenvía íntegro y sin scope.
+export function createScopeFilter(emit) {
+  const LABEL = /^\s*\[(GENERAL|PROYECTO)\]\s*/i;
+  let buf = '';
+  let done = false;
+  const release = () => {
+    done = true;
+    if (buf) emit({ type: 'answer_delta', text: buf });
+    buf = '';
+  };
+  const resolve = () => {
+    const m = LABEL.exec(buf);
+    if (!m) return release();
+    done = true;
+    emit({ type: 'answer_scope', scope: m[1].toLowerCase() });
+    const rest = buf.slice(m[0].length);
+    buf = '';
+    if (rest) emit({ type: 'answer_delta', text: rest });
+  };
+  return {
+    push(t) {
+      if (done) return emit({ type: 'answer_delta', text: t });
+      buf += t;
+      const head = buf.trimStart();
+      if (!head) return;
+      if (head[0] !== '[') return release();
+      if (/\]\s*\S/.test(head) || head.length > 16) resolve(); // etiqueta completa y ya hay texto detrás, o demasiado larga
+    },
+    end() {
+      if (!done) resolve();
+    },
+  };
+}
 
 // Arranca el servidor HTTP/WS. Toda la configuración entra por `opts`; el módulo no lee process.env.
 // Sin claves arranca igual (para poder mostrar Ajustes): /ws avisa y cierra, /transcribe responde 400.
@@ -247,6 +287,7 @@ export async function startServer({
       abort?.abort();
       const controller = (abort = new AbortController());
       send({ type: 'answer_start', question });
+      const scope = createScopeFilter(send);
       const recent = history.slice(-10).join('\n');
       try {
         const stream = anthropic.messages.stream(
@@ -263,8 +304,9 @@ export async function startServer({
           },
           { signal: controller.signal },
         );
-        stream.on('text', (t) => send({ type: 'answer_delta', text: t }));
+        stream.on('text', (t) => scope.push(t));
         const final = await stream.finalMessage();
+        scope.end();
         if (final.stop_reason === 'max_tokens') {
           console.warn('Respuesta truncada por max_tokens', final.usage?.output_tokens);
           send({ type: 'answer_truncated' });

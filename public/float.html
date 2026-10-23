@@ -6,31 +6,39 @@
 <title>Copiloto QA</title>
 <style>
   :root {
-    --bg: #ffffff; --fg: #0f172a; --muted: #475569; --live: #dc2626;
+    --bg: #ffffff; --fg: #0f172a; --muted: #475569; --live: #dc2626; --accent: #2563eb;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #0b0f17; --fg: #e5e9f0; --muted: #94a3b8; --live: #f87171; }
+    :root { --bg: #0b0f17; --fg: #e5e9f0; --muted: #94a3b8; --live: #f87171; --accent: #60a5fa; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; padding: 12px; height: 100vh; overflow: auto; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  #question { color: var(--muted); font-size: 14px; margin-bottom: 8px; min-height: 21px; }
+  #question { color: var(--muted); font-size: 14px; min-height: 21px; }
+  .qrow { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .scope { flex: none; font-size: 12px; font-weight: 600; padding: 1px 8px; border: 1px solid var(--muted); border-radius: 999px; color: var(--muted); }
+  .scope.proyecto { border-color: var(--accent); color: var(--accent); }
   #answer { font-size: 22px; line-height: 1.45; white-space: pre-wrap; }
   #answer.empty { color: var(--muted); font-size: 16px; }
   #answer.warn { color: var(--live); font-size: 16px; }
 </style>
 </head>
 <body>
-<div id="question"></div>
+<div class="qrow"><span id="scope" class="scope" hidden></span><div id="question"></div></div>
 <div id="answer" class="empty" role="status" aria-live="polite">Esperando pregunta…</div>
 <script>
-const q = document.getElementById('question'), a = document.getElementById('answer');
+const q = document.getElementById('question'), sc = document.getElementById('scope'), a = document.getElementById('answer');
 window.desktop?.float.onMessage((m) => {
   if (m.type === 'answer_start') {
     q.textContent = m.question;
+    sc.hidden = true;
     a.textContent = '';
     a.className = '';
   } else if (m.type === 'answer_delta') {
     a.textContent += m.text;
+  } else if (m.type === 'answer_scope') {
+    sc.textContent = m.scope === 'proyecto' ? 'Sobre tu proyecto' : 'General';
+    sc.className = 'scope ' + m.scope;
+    sc.hidden = false;
   } else if (m.type === 'answer_truncated') {
     a.textContent += ' …';
   } else if (m.type === 'error') {

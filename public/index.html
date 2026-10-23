@@ -47,7 +47,10 @@
   @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
   h2 { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
   .panel { border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space); min-height: 220px; }
-  #question { color: var(--muted); font-size: 14px; margin-bottom: 8px; min-height: 21px; }
+  #question { color: var(--muted); font-size: 14px; min-height: 21px; }
+  .qrow { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .scope { flex: none; font-size: 12px; font-weight: 600; padding: 1px 8px; border: 1px solid var(--muted); border-radius: 999px; color: var(--muted); }
+  .scope.proyecto { border-color: var(--accent); color: var(--accent); }
   #answer { font-size: 22px; line-height: 1.45; white-space: pre-wrap; }
   #answer.empty { color: var(--muted); font-size: 16px; }
   #transcript { max-height: 340px; overflow: auto; color: var(--muted); font-size: 15px; }
@@ -95,7 +98,7 @@
   <div class="grid">
     <section class="panel" id="answerPanel" aria-labelledby="h-answer">
       <h2 id="h-answer">Respuesta sugerida</h2>
-      <div id="question"></div>
+      <div class="qrow"><span id="scope" class="scope" hidden></span><div id="question"></div></div>
       <div id="answer" class="empty" aria-live="polite">Esperando una pregunta.</div>
     </section>
     <section class="panel" aria-labelledby="h-tr">
@@ -328,10 +331,16 @@ function handle(m) {
     box.scrollTop = box.scrollHeight;
   } else if (m.type === 'answer_start') {
     $('question').textContent = m.question;
+    $('scope').hidden = true;
     $('answer').textContent = '';
     $('answer').classList.remove('empty');
   } else if (m.type === 'answer_delta') {
     $('answer').textContent += m.text;
+  } else if (m.type === 'answer_scope') {
+    const sc = $('scope');
+    sc.textContent = m.scope === 'proyecto' ? 'Sobre tu proyecto' : 'General';
+    sc.className = 'scope ' + m.scope;
+    sc.hidden = false;
   } else if (m.type === 'answer_truncated') {
     $('answer').textContent += ' …';
   } else if (m.type === 'status') {
